@@ -795,11 +795,17 @@ function Get-PeStreamInfo {
         $characteristics = [BitConverter]::ToUInt32($sectionBytes, $entry + 36)
         if (($characteristics -band 0x20000000) -ne 0 -and $rawSize -gt 0 -and
             ([long]$rawOffset + $rawSize) -le $Stream.Length) {
-            $ranges += [pscustomobject]@{ Start = [long]$rawOffset; Length = [long]$rawSize }
+            $ranges += [pscustomobject]@{ Start = [long]$rawOffset; Length = [long]$rawSize; VirtualAddress = [long][BitConverter]::ToUInt32($sectionBytes, $entry + 12) }
         }
     }
     if ($ranges.Count -eq 0) { throw 'PE file has no executable sections.' }
-    return [pscustomobject]@{ Machine = [int]$machine; ExecutableRanges = $ranges }
+    $imageBase = [uint64]0
+    if ($machine -eq 0x8664) {
+        $optional = Read-StreamRange $Stream ($peOffset + 24) $optionalSize
+        if ($null -eq $optional -or $optional.Length -lt 32 -or [BitConverter]::ToUInt16($optional, 0) -ne 0x20b) { throw 'Invalid x64 optional header.' }
+        $imageBase = [BitConverter]::ToUInt64($optional, 24)
+    }
+    return [pscustomobject]@{ Machine = [int]$machine; ExecutableRanges = $ranges; ImageBase = $imageBase }
 }
 
 function Test-PatternCompatibility {
@@ -1200,7 +1206,11 @@ function Resolve-TargetAnalysis {
         throw "No unique supported signature profile matched. The target was not modified.`n$($details -join "`n")"
     }
 
-    $selected = $validProfiles[0]
+    return Complete-TargetAnalysis $Path $peInfo $validProfiles[0] (Get-ByteArraySha256 $Bytes)
+}
+
+function Complete-TargetAnalysis {
+    param([string]$Path,$peInfo,$selected,[string]$hash)
     $states = @($selected.Rules | ForEach-Object { Get-RuleState $_ })
     $allOriginal = @($states | Where-Object { $_ -eq 'Original' }).Count -eq $states.Count
     $allPatched = @($states | Where-Object {
@@ -1223,7 +1233,6 @@ function Resolve-TargetAnalysis {
     }
 
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
-    $hash = Get-ByteArraySha256 $Bytes
     $publicResult = [pscustomobject]@{
         Target = $Path
         ProductName = $version.ProductName
@@ -2034,6 +2043,1313 @@ function Get-ReceiptPatchedAnalysis {
     }
 }
 
+# Streamed detection and bounded x64 control-flow recognition.
+if (-not ('Mv2SmallScan' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class Mv2SmallScan {
+    static int Immediate(byte[] b, int p, int end) {
+        if (p+8 >= end || b[p] != 0x83 || (b[p+1]&0x38) != 0x38) return -1;
+        int mod=b[p+1]>>6, rm=b[p+1]&7, q=p+2;
+        if(mod!=3 && rm==4) { int sib=b[q++]; if(mod==0 && (sib&7)==5) q+=4; }
+        if(mod==0 && rm==5) q+=4;
+        if(mod==1) q++; else if(mod==2) q+=4;
+        return q;
+    }
+    // Same conservative byte prefilter as V4, with sparse searches and early success.
+    public static long[] Seeds(byte[] b, int start, int length) {
+        var hits=new List<long>(); int end=checked(start+length), p=start;
+        while(p<end-264) {
+            p=Array.IndexOf(b,(byte)0x83,p,end-264-p); if(p<0) break;
+            int q=Immediate(b,p,end);
+            if(q>=0 && b[q]==2) {
+                int bits=0; bool typeMask=false;
+                for(int k=q+1;k<q+257;k++) {
+                    if(k+3<end && b[k]==10 && b[k+1]==1 && b[k+2]==0 && b[k+3]==0) typeMask=true; int v=Immediate(b,k,end); if(v<0) continue;
+                    if(b[v]==1) bits|=1; else if(b[v]==5) bits|=2; else if(b[v]==10) bits|=4;
+                    if(bits==7 || (bits==6 && typeMask)) break;
+                }
+                if(bits==7 || (bits==6 && typeMask)) {
+                    int seed=p;
+                    if(p>start && b[p-1]>=0x40 && b[p-1]<=0x4f) seed--;
+                    if(seed>=2 && b[seed-2]==0x31 && b[seed-1]==0xc0) seed-=2; hits.Add(seed);
+                    if(hits.Count>64) throw new InvalidOperationException("Broad candidate budget exceeded");
+                }
+            }
+            p++;
+        }
+        return hits.ToArray();
+    }
+    public static long[] Masked(byte[] b, byte[] values, byte[] masks, int length) {
+        if(values.Length==0 || values.Length!=masks.Length || length>b.Length) throw new ArgumentException("Pattern/buffer shape");
+        int anchor=-1, best=0, run=0;
+        for(int i=0;i<masks.Length;i++) {
+            run=masks[i]==255 ? run+1 : 0;
+            if(run>best) { best=run; anchor=i-run+1; }
+        }
+        if(anchor<0) throw new ArgumentException("A fully fixed anchor is required");
+        var hits=new List<long>(); int at=0, limit=length-values.Length;
+        while(at<=limit) {
+            int found=Array.IndexOf(b,values[anchor],at+anchor,limit-at+1);
+            if(found<0) break;
+            at=found-anchor;
+            bool ok=true;
+            for(int i=0;i<values.Length;i++) if((b[at+i]&masks[i])!=values[i]) {ok=false;break;}
+            if(ok) {hits.Add(at); if(hits.Count>1024) throw new InvalidOperationException("Pattern candidate budget exceeded");}
+            at++;
+        }
+        return hits.ToArray();
+    }
+    public static long[] Reasons(byte[] b, int length) {
+        var hits=new List<long>();
+        for(int p=0;p+8<=length;p++) {
+            p=Array.IndexOf(b,(byte)0xc7,p,length-7-p);
+            if(p<0) break;
+            if(b[p+1]!=0x44 || b[p+2]!=0x24 || b[p+4]!=0 || b[p+5]!=0 || b[p+6]!=0 || b[p+7]!=2) continue;
+            for(int q=Math.Max(0,p-32);q+2<p;q++) {
+                if(!((b[q]==0x89 && (b[q+1]&0xc7)==0xc1) || (b[q]==0x8b && (b[q+1]&0xf8)==0xc8))) continue;
+                int at=q+2; while(at<p && b[at]==0x90) at++;
+                if(at+5>p || b[at]!=0xe8) continue;
+                int seed=q; if(q>0 && b[q-1]>=0x40 && b[q-1]<=0x47) seed--;
+                hits.Add(seed); if(hits.Count>64) throw new InvalidOperationException("Reason candidate budget exceeded");
+            }
+        }
+        return hits.ToArray();
+    }}
+
+
+
+// Windows DbgEng COM slots from the published IDebugClient/Control/Symbols ABI.
+// Only file-backed targets are opened. No process attach or execution API is exposed.
+public sealed class Mv2NativeDisassembler : IDisposable {
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int QueryInterfaceCall(IntPtr self, ref Guid iid, out IntPtr result);
+    [DllImport("dbgeng.dll", ExactSpelling=true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern int DebugCreate(ref Guid iid, out IntPtr client);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int TextCall(IntPtr self, [MarshalAs(UnmanagedType.LPStr)] string text);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int UIntCall(IntPtr self, uint value);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int WaitCall(IntPtr self, uint flags, uint timeout);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int ModuleCall(IntPtr self, uint index, out ulong address);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int DisassembleCall(IntPtr self, ulong address, uint flags,
+        [Out, MarshalAs(UnmanagedType.LPStr)] StringBuilder text, uint capacity,
+        out uint used, out ulong end);
+    private IntPtr client, control, symbols;
+    private DisassembleCall disassemble;
+    private readonly StringBuilder instructionText = new StringBuilder(512);
+    private static readonly System.Text.RegularExpressions.Regex instructionPattern =
+        new System.Text.RegularExpressions.Regex(@"^\S+\s+([0-9a-f]+)\s+(\S+)\s*(.*)$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    public ulong ImageBase { get; private set; }
+    public Mv2NativeDisassembler(string path) {
+        try {
+            path = System.IO.Path.GetFullPath(path);
+            Guid id = new Guid("27fe5639-8407-4f47-8364-ee118fb08ac8");
+            Check(DebugCreate(ref id, out client), "DebugCreate");
+            id = new Guid("5182e668-105e-416e-ad92-24ef800424ba");
+            Check(Call<QueryInterfaceCall>(client, 0)(client, ref id, out control), "IDebugControl");
+            id = new Guid("8c31e98c-983a-48a5-9016-6fe5d667a950");
+            Check(Call<QueryInterfaceCall>(client, 0)(client, ref id, out symbols), "IDebugSymbols");
+            // No network paths, shell commands, managed support or execution.
+            // Image mapping needs module loading, but the symbol search path stays empty.
+            Check(Call<UIntCall>(control, 54)(control, 0x00015008), "AddEngineOptions");
+            Check(Call<TextCall>(symbols, 41)(symbols, ""), "SetSymbolPath");
+            Check(Call<TextCall>(symbols, 44)(symbols, System.IO.Path.GetDirectoryName(path)), "SetImagePath");
+            Check(Call<TextCall>(client, 19)(client, path), "OpenDumpFile");
+            Check(Call<WaitCall>(control, 93)(control, 0, 10000), "WaitForEvent");
+            Check(Call<UIntCall>(control, 48)(control, 0x8664), "SetEffectiveProcessorType");
+            disassemble = Call<DisassembleCall>(control, 26);
+            ulong imageBase;
+            Check(Call<ModuleCall>(symbols, 13)(symbols, 0, out imageBase), "GetModuleByIndex");
+            ImageBase = imageBase;
+        } catch { Dispose(); throw; }
+    }
+    private static T Call<T>(IntPtr instance, int slot) where T : class {
+        IntPtr entry = Marshal.ReadIntPtr(Marshal.ReadIntPtr(instance), slot * IntPtr.Size);
+        return Marshal.GetDelegateForFunctionPointer(entry, typeof(T)) as T;
+    }
+    private static void Check(int hr, string operation) {
+        if (hr < 0) throw new InvalidOperationException(operation + ": 0x" + hr.ToString("X8"));
+    }
+    public Mv2NativeInstruction Decode(ulong address) {
+        StringBuilder text = instructionText;
+        text.Length = 0;
+        uint used; ulong end;
+        Check(disassemble(control, address, 0, text, (uint)text.Capacity, out used, out end), "Disassemble");
+        if (end <= address || end - address > 15 || used > text.Capacity || text.ToString().Contains("???"))
+            throw new InvalidOperationException("Invalid or truncated instruction: " + text.ToString());
+        string value = text.ToString().Trim();
+        var match = instructionPattern.Match(value);
+        if (!match.Success) throw new InvalidOperationException("Unparsed: " + value);
+        string op = match.Groups[2].Value, raw = match.Groups[1].Value;
+        long? target = null;
+        if (op == "call" || op.StartsWith("j", StringComparison.Ordinal)) {
+            byte[] bytes = new byte[raw.Length / 2];
+            for (int j = 0; j < bytes.Length; j++) bytes[j] = Convert.ToByte(raw.Substring(2*j, 2), 16);
+            if (op == "call" && bytes[0] == 0xe8) target = checked((long)end + BitConverter.ToInt32(bytes, 1));
+            if (op.StartsWith("j", StringComparison.Ordinal)) {
+                if (bytes[0] == 0x0f && (bytes[1] & 0xf0) == 0x80) target = checked((long)end + BitConverter.ToInt32(bytes, 2));
+                else if (bytes[0] == 0xe9) target = checked((long)end + BitConverter.ToInt32(bytes, 1));
+                else if ((bytes[0] & 0xf0) == 0x70 || bytes[0] == 0xeb) target = checked((long)end + (bytes[1] < 128 ? bytes[1] : bytes[1] - 256));
+                else throw new InvalidOperationException("Indirect branch rejected");
+            }
+        }
+        return new Mv2NativeInstruction { Address = address, End = end, Text = value,
+            Op = op, Args = match.Groups[3].Value, Target = target };
+    }
+    public void Dispose() {
+        if (client != IntPtr.Zero) Call<UIntCall>(client, 26)(client, 0);
+        if (symbols != IntPtr.Zero) { Marshal.Release(symbols); symbols = IntPtr.Zero; }
+        if (control != IntPtr.Zero) { Marshal.Release(control); control = IntPtr.Zero; }
+        if (client != IntPtr.Zero) { Marshal.Release(client); client = IntPtr.Zero; }
+    }
+}
+public sealed class Mv2NativeInstruction {
+    public ulong Address;
+    public ulong End;
+    public string Text;
+    public string Op;
+    public string Args;
+    public long? Target;
+}
+
+public static class Mv2SnippetDump {
+    // A synthetic dump of file bytes, never a snapshot of a running process.
+    public static void Write(string path, byte[] source, long[] offsets, ulong[] addresses, ulong imageBase) {
+        if (offsets.Length == 0 || offsets.Length != addresses.Length || offsets.Length > 64)
+            throw new ArgumentException("Invalid snippet count");
+        const int size = 4096, data = 4096;
+        using (var f = File.Create(path)) using (var w = new BinaryWriter(f)) {
+            f.SetLength(data + offsets.Length * size);
+            w.Write(0x504d444dU); w.Write(0xa793U); w.Write(4U); w.Write(32U);
+            f.Position = 32;
+            foreach (uint n in new uint[] {7,56,80,3,52,136,5,(uint)(4+16*offsets.Length),2048,4,112,208}) w.Write(n);
+            f.Position=80; w.Write((ushort)9);
+            f.Position=86; w.Write((byte)1); w.Write((byte)1); w.Write(10U); w.Write(0U); w.Write(26100U); w.Write(2U);
+            f.Position=136; w.Write(1U); w.Write(1U);
+            f.Position=180; w.Write(1232U); w.Write(512U);
+            f.Position=208; w.Write(1U); w.Write(imageBase); w.Write(0x20000000U);
+            f.Position=232; w.Write(320U);
+            f.Position=320; byte[] name=System.Text.Encoding.Unicode.GetBytes("branch-snippet.dll"); w.Write(name.Length); w.Write(name);
+            f.Position=560; w.Write(0x100003U);
+            f.Position=568; w.Write((ushort)0x33);
+            f.Position=578; w.Write((ushort)0x2b); w.Write(0x202U);
+            f.Position=664; w.Write(addresses[0]+1024);
+            f.Position=760; w.Write(addresses[0]);
+            f.Position=2048; w.Write((uint)offsets.Length);
+            for(int i=0;i<offsets.Length;i++) {
+                if (offsets[i]<0 || offsets[i]+size>source.LongLength) throw new ArgumentException("Truncated snippet");
+                w.Write(addresses[i]); w.Write((uint)size); w.Write((uint)(data+i*size));
+            }
+            for(int i=0;i<offsets.Length;i++) { f.Position=data+i*size; w.Write(source,(int)offsets[i],size); }
+        }
+    }
+}
+'@
+}
+
+function Get-Mv2NativeRules {
+    param([IO.FileStream]$Stream,$PeInfo,[string[]]$RuleNames)
+    Set-StrictMode -Off
+    $supported=@('skip-startup-disable','allow-install-policy-inline','allow-enable-and-report','allow-enable-policy-inline','allow-install','ignore-mv2-disable-reason-at-runtime')
+    if(!$RuleNames.Count) {$RuleNames=$supported}
+    if(@($RuleNames | Where-Object {$_ -notin $supported}).Count -or @($RuleNames | Sort-Object -Unique).Count -ne $RuleNames.Count) {throw 'Invalid native rule selection'}
+    $traceReasons='ignore-mv2-disable-reason-at-runtime' -in $RuleNames
+    $traceOriginal=@($RuleNames | Where-Object {$_ -in @('skip-startup-disable','allow-install-policy-inline')}).Count -gt 0
+    $traceAdditional=@($RuleNames | Where-Object {$_ -in @('allow-enable-and-report','allow-enable-policy-inline','allow-install')}).Count -gt 0
+    $traceManifests=$traceOriginal -or $traceAdditional
+    $calleeCache=@{}
+    $pe=$PeInfo; $imageBase=[uint64]$PeInfo.ImageBase; $Inspect=$false
+    $nativeState=@{offset=0L;lo=[uint64]0;hi=[uint64]0;cache=@{};decodeCount=0;engine=$null}
+    $dumpRoot=Join-Path ([IO.Path]::GetTempPath()) ('ChromiumMV2Trace-'+[guid]::NewGuid())
+    New-Item -ItemType Directory -Path $dumpRoot | Out-Null
+function Native-Next([uint64]$at,[hashtable]$state) {
+    for($n=0;$n -lt 16;$n++) {
+        $ins=Next-Real $at
+        if($ins.Op -in @('mov','lea') -and $ins.Args -match '^(r\w+|e\w+),') {Apply-Copy $ins $state; $at=$ins.End; continue}
+        if($ins.Op -eq 'xor' -and $ins.Args -match '^(e\w+|r[0-9]+d),\1$') {$state[(Canonical-Register $Matches[1])]='0'; $at=$ins.End; continue}
+        return $ins
+    }
+    throw 'Extra copy budget exceeded'
+}
+function Native-ByteRegister([string]$reg) {
+    $map=@{al='rax';cl='rcx';dl='rdx';bl='rbx';sil='rsi';dil='rdi';bpl='rbp';spl='rsp'}
+    if($map.ContainsKey($reg)) {return $map[$reg]}
+    if($reg -match '^(r[0-9]+)b$') {return $Matches[1]}
+    throw 'Unsupported byte register'
+}
+function Native-FalseReturn([uint64]$at,[hashtable]$state) {
+    $local=$state.Clone(); $ins=Native-Next $at $local
+    if($ins.Op -ne 'ret' -or (Resolve-Value 'eax' $local) -ne '0') {throw 'No side-effect-free false return'}
+    return $ins.Address
+}
+function Native-BranchPatch($guard) {
+    $size=[int]($guard.End-$guard.Address); $raw=[byte[]]::new($size)
+    if($guard.Op -eq 'jle') {for($i=0;$i -lt $size;$i++) {$raw[$i]=0x90}}
+    elseif($guard.Op -eq 'jg' -and $size -eq 2) {$raw[0]=0xeb; $raw[1]=[byte](($guard.Target-$guard.End) -band 255)}
+    elseif($guard.Op -eq 'jg' -and $size -eq 6) {
+        $raw[0]=0x90; $raw[1]=0xe9
+        [Array]::Copy([BitConverter]::GetBytes([int]($guard.Target-$guard.End)),0,$raw,2,4)
+    } else {throw 'Unsupported extra branch encoding'}
+    return ,$raw
+}
+function Native-TypeSet($first,[hashtable]$state,[uint64]$normal) {
+    $branch=Next-Real $first.End
+    if($first.Args -match '^(.+),8$' -and $branch.Op -eq 'ja') {
+        $origin=Resolve-Value $Matches[1] $state
+        if((Next-Real $branch.Target).Address -ne $normal) {throw 'Type range does not reject to normal path'}
+        $mask=Next-Real $branch.End
+        if($mask.Op -ne 'mov' -or $mask.Args -notmatch '^(e\w+|r[0-9]+d),10Ah$' -or (Canonical-Register $Matches[1]) -eq 'rax') {throw 'Unknown type bit mask'}
+        $maskReg=Canonical-Register $Matches[1]; Apply-Copy $mask $state
+        $bt=Next-Real $mask.End
+        if($bt.Op -ne 'bt' -or $bt.Args -notmatch '^([^,]+),([^,]+)$') {throw 'No bounded type bit test'}
+        if((Canonical-Register $Matches[1]) -ne $maskReg -or (Resolve-Value $Matches[2] $state) -ne $origin) {throw 'Type bit index changed'}
+        $reject=Next-Real $bt.End
+        if($reject.Op -ne 'jae' -or (Next-Real $reject.Target).Address -ne $normal) {throw 'Type bit rejection changed'}
+        return [pscustomobject]@{Origin=$origin;Entry=(Next-Real $reject.End).Address;Offsets=@($first.Address);BitSet=$true}
+    }
+    $seen=@{}; $origin=$null; $entry=$null; $at=$first.Address; $offsets=@(); $equalState=$null
+    for($i=0;$i -lt 3;$i++) {
+        $cmp=Native-Next $at $state
+        if($cmp.Op -ne 'cmp' -or $cmp.Args -notmatch '^(.+),(1|3|8)$') {throw 'Incomplete type membership'}
+        $value=$Matches[2]; $valueOrigin=Resolve-Value $Matches[1] $state
+        if($seen.ContainsKey($value) -or ($origin -and $origin -ne $valueOrigin)) {throw 'Type membership value mismatch'}
+        $origin=$valueOrigin; $seen[$value]=$true; $offsets+=$cmp.Address
+        $j=Next-Real $cmp.End
+        if($j.Op -notin @('je','jne')) {throw 'Unsupported type equality'}
+        $equal=if($j.Op -eq 'je') {$j.Target} else {$j.End}
+        $other=if($j.Op -eq 'jne') {$j.Target} else {$j.End}
+        $equal=(Next-Real $equal).Address
+        if($entry -and $entry -ne $equal) {throw 'Type alternatives enter different paths'}
+        $entry=$equal; $at=$other
+        if($null -eq $equalState) {$equalState=$state.Clone()}
+        else {
+            foreach($key in @(@($equalState.Keys)+@($state.Keys) | Sort-Object -Unique)) {
+                if((Resolve-Value $key $equalState) -ne (Resolve-Value $key $state)) {throw 'Type alternatives carry different values'}
+            }
+        }
+    }
+    if((Next-Real $at).Address -ne $normal) {throw 'Excluded type does not reach the normal path'}
+    return [pscustomobject]@{Origin=$origin;Entry=$entry;Offsets=$offsets;BitSet=$false}
+}
+function Native-PolicyEffect([uint64]$bad,[uint64]$good,[uint64]$normal,[hashtable]$state) {
+    $normalState=$state.Clone(); $normalJoin=Native-Next $normal $normalState
+    if($normalJoin.Address -ne $good) {throw 'Policy normal path does not join cleanup'}
+    $reason=Next-Real $bad
+    if($reason.Op -ne 'mov' -or $reason.Args -notmatch '^(e\w+|r[0-9]+d),800000h$') {throw 'No MV2 disable reason'}
+    $reasonReg=$Matches[1]
+    $nullCheck=Next-Real $reason.End
+    if($nullCheck.Op -ne 'test' -or $nullCheck.Args -notmatch '^(r\w+),\1$') {throw 'No reason-output null check'}
+    $pointer=$Matches[1]; $skip=Next-Real $nullCheck.End
+    if($skip.Op -ne 'je') {throw 'Reason output null branch changed'}
+    $write=Next-Real $skip.End
+    if($write.Op -ne 'mov' -or $write.Args -ne "dword ptr [$pointer],$reasonReg") {throw 'Reason output write changed'}
+    $set=Next-Real $write.End
+    if((Next-Real $skip.Target).Address -ne $set.Address -or $set.Op -ne 'mov' -or $set.Args -notmatch '^([^,]+),1$') {throw 'Policy result flag changed'}
+    $resultReg=Native-ByteRegister $Matches[1]
+    if((Resolve-Value $resultReg $normalState) -ne '0' -or (Resolve-Value $resultReg $state) -ne '0') {throw 'Policy unaffected result is not zero'}
+    if((Next-Real $set.End).Address -ne $good) {throw 'Policy effect does not rejoin cleanup'}
+    # One fall-through epilogue is checked; conditional cleanup/cookie paths are retained, not proved.
+    $at=$good; $returned=$false; $copyFound=$false
+    for($i=0;$i -lt 24;$i++) {
+        $ins=Read-Instruction $at; $at=$ins.End
+        if($ins.Op -eq 'ret') {$returned=$true; break}
+        if($ins.Op -eq 'call' -or $ins.Op -eq 'jmp') {throw 'Unknown policy epilogue'}
+        if($ins.Op -eq 'mov' -and $ins.Args -match '^eax,([^,]+)$') {
+            if((Canonical-Register $Matches[1]) -ne $resultReg) {throw 'Policy returns a different value'}
+            $copyFound=$true
+        }
+        if($ins.Op -notin @('cmp','test','push','pop','nop') -and $ins.Op -notmatch '^j' -and $ins.Args -match '^([re][a-z0-9]+),') {
+            if((Canonical-Register $Matches[1]) -eq $resultReg) {throw 'Policy result overwritten before return'}
+            if($copyFound -and (Canonical-Register $Matches[1]) -eq 'rax' -and $ins.Args -notmatch '^eax,') {throw 'Policy return register overwritten'}
+        }
+    }
+    if(!$returned -or !$copyFound) {throw 'No bounded policy result return'}
+    return [pscustomobject]@{ReasonOffset=$nativeState.offset+$reason.Address-$nativeState.lo;WriteOffset=$nativeState.offset+$write.Address-$nativeState.lo;CleanupRva=$good-$imageBase}
+}
+function Native-Manifest([uint64]$Address) {
+    $state=@{}; $first=Native-Next $Address $state
+    if($first.Op -ne 'cmp' -or $first.Args -notmatch '^(.+),2$') {throw 'No extra manifest comparison'}
+    $manifest=Resolve-Value $Matches[1] $state; $prefixState=$state.Clone()
+    $guard=Next-Real $first.End
+    if($guard.Op -eq 'jg') {$normal=(Next-Real $guard.Target).Address; $at=$guard.End}
+    elseif($guard.Op -eq 'jle') {$normal=(Next-Real $guard.End).Address; $at=$guard.Target}
+    else {throw 'Unsupported extra manifest guard'}
+    $override=$null; $ins=Native-Next $at $state
+    if($ins.Op -eq 'cmp' -and $ins.Args -match '^(byte ptr \[.+\]),0$') {
+        $overrideOrigin=Resolve-Value $Matches[1] $state
+        $branch=Next-Real $ins.End
+        if($branch.Op -notin @('je','jne')) {throw 'Unsupported object override'}
+        $override=if($branch.Op -eq 'jne') {$branch.Target} else {$branch.End}
+        $at=if($branch.Op -eq 'je') {$branch.Target} else {$branch.End}
+        $ins=Native-Next $at $state
+    }
+    $typeState=$state.Clone(); $type=Native-TypeSet $ins $typeState $normal
+    # Equality arms in the supported type chain have no copies; do not carry mismatch-arm state into them.
+    if($type.BitSet) {$state=$typeState}
+    $locationStart=$type.Entry
+    if($override -and (Next-Real $override).Address -ne $locationStart) {throw 'Override bypasses the location filter'}
+    $cmp=Native-Next $locationStart $state
+    $locationOrigin=$null; $locations=@{}; $byteValues=@{}; $good=$null; $bad=$null; $policy=$false
+    for($i=0;$i -lt 2;$i++) {
+        if($cmp.Op -ne 'cmp' -or $cmp.Args -notmatch '^(.+),(5|0Ah)$') {throw 'No extra location comparison'}
+        $value=$Matches[2]; $origin=Resolve-Value $Matches[1] $state
+        if($locations.ContainsKey($value) -or ($locationOrigin -and $origin -ne $locationOrigin)) {throw 'Extra location value mismatch'}
+        $locationOrigin=$origin; $locations[$value]=$cmp.Address
+        $next=Next-Real $cmp.End
+        if($next.Op -eq 'setne') {
+            if($i -gt 0 -and $policy) {throw 'Mixed location encodings'}
+            $byteValues[$next.Args]=$value
+            $state[(Native-ByteRegister $next.Args)]='partial-byte-write'
+            $at=$next.End
+        } elseif($next.Op -in @('je','jne')) {
+            if($byteValues.Count) {throw 'Mixed location encodings'}
+            $policy=$true
+            $equal=if($next.Op -eq 'je') {$next.Target} else {$next.End}
+            $other=if($next.Op -eq 'jne') {$next.Target} else {$next.End}
+            $equal=(Next-Real $equal).Address
+            if($good -and $good -ne $equal) {throw 'Policy location exclusions disagree'}
+            $good=$equal; $at=$other
+        } else {throw 'Unsupported extra location result'}
+        if($i -eq 0) {$cmp=Native-Next $at $state}
+    }
+    if($locationOrigin -eq $manifest -or $locationOrigin -eq $type.Origin -or $manifest -eq $type.Origin) {throw 'Aliased predicate inputs'}
+    $memoryLocation=$locationOrigin -like 'dword ptr *'
+    if($manifest -like 'dword ptr *') {
+        if($type.Origin -notmatch '^dword ptr \[\{(.+)\}\+[0-9a-f]+h\]$') {throw 'Unknown type object'}
+        $object=$Matches[1]
+        if($locationOrigin -notmatch '^dword ptr \[\{(.+)\}\+[0-9a-f]+h\]$' -or $Matches[1] -ne $object) {throw 'Extra fields come from different objects'}
+    } elseif(!$memoryLocation -and ($manifest -notmatch '^low32\(r\w+\)$' -or $type.Origin -notmatch '^low32\(r\w+\)$' -or $locationOrigin -notmatch '^low32\(r\w+\)$')) {throw 'Unknown direct predicate inputs'}
+    $evidence=$null
+    if($policy) {
+        if(!$memoryLocation) {throw 'Policy location has no object origin'}
+        $bad=(Next-Real $at).Address
+        $evidence=Native-PolicyEffect $bad $good $normal $state
+        $name='allow-enable-policy-inline'
+    } else {
+        $combine=Next-Real $at
+        if($combine.Op -ne 'and' -or $combine.Args -notmatch '^([^,]+),([^,]+)$') {throw 'Location booleans are not intersected'}
+        $dest=$Matches[1]; $src=$Matches[2]
+        if(!$byteValues.ContainsKey($dest) -or !$byteValues.ContainsKey($src) -or $byteValues[$dest] -eq $byteValues[$src]) {throw 'Location conjunction lost an input'}
+        $ret=Next-Real $combine.End
+        if($dest -ne 'al') {
+            if($ret.Op -ne 'mov' -or $ret.Args -ne "al,$dest") {throw 'Location conjunction is not returned'}
+            $ret=Next-Real $ret.End
+        }
+        if($ret.Op -ne 'ret') {throw 'Boolean predicate has extra effects'}
+        $normalRet=Native-FalseReturn $normal $prefixState
+        if($normalRet -ne $ret.Address) {throw 'Boolean outcomes do not share their return'}
+        $name=if($memoryLocation) {'allow-enable-and-report'} else {'allow-install'}
+        $evidence=[pscustomobject]@{ReturnRva=$ret.Address-$imageBase;TypeBitSet=$type.BitSet}
+    }
+    return [pscustomobject]@{Name=$name;Offset=$nativeState.offset;PatchOffset=$nativeState.offset+$guard.Address-$nativeState.lo;
+        Replacement=(Native-BranchPatch $guard);ExtraEvidence=$evidence;Manifest=$manifest;Type=$type.Origin;Location=$locationOrigin;
+        FiveOffset=$nativeState.offset+$locations['5']-$nativeState.lo;TenOffset=$nativeState.offset+$locations['0Ah']-$nativeState.lo;
+        TypeOffsets=@($type.Offsets | ForEach-Object {$nativeState.offset+$_-$nativeState.lo});CallRva=$null;NormalCallRva=$null}
+}
+function Native-Integer([string]$text) {
+    if($text -match '^([0-9a-f]+)h$') {return [long][Convert]::ToUInt64($Matches[1],16)}
+    if($text -match '^\d+$') {return [long]$text}
+    throw 'Unknown integer'
+}
+function Native-Scalar([string]$text,[hashtable]$registers) {
+    if($text -eq 'al') {if(!$registers.ContainsKey('rax')) {throw 'Undefined scalar return'}; return [long]$registers.rax -band 255}
+    if($text -match '^(r\w+|e\w+)$') {
+        $reg=Canonical-Register $text
+        if(!$registers.ContainsKey($reg)) {throw 'Undefined scalar input'}
+        $value=[long]$registers[$reg]
+        if($text -match '^(e\w+|r[0-9]+d)$') {$value=$value -band 0xffffffffL}
+        return $value
+    }
+    return Native-Integer $text
+}
+function Native-EvaluateValidator([uint64]$entry,[long]$value) {
+    $registers=@{rcx=($value -band 0xffffffffL)}; $at=$entry; $seen=@{}; $equal=$null; $less=$null; $unsignedLess=$null; $carry=$null
+    for($step=0;$step -lt 64;$step++) {
+        if($seen.ContainsKey($at)) {throw 'Validator execution cycle'}; $seen[$at]=$true
+        $ins=Read-Instruction $at; $at=$ins.End; $parts=$ins.Args.Split(',')
+        switch($ins.Op) {
+            'ret' {return Native-Scalar 'al' $registers}
+            'nop' {}
+            'jmp' {$at=$ins.Target}
+            'mov' {
+                $scalar=Native-Scalar $parts[1] $registers
+                $dest=if($parts[0] -eq 'al') {'rax'} else {Canonical-Register $parts[0]}
+                $registers[$dest]=$scalar
+            }
+            'xor' {$registers[(Canonical-Register $parts[0])]=0L; $equal=$true; $less=$false; $unsignedLess=$false; $carry=$false}
+            'cmp' {
+                $left=(Native-Scalar $parts[0] $registers) -band 0xffffffffL
+                $right=(Native-Scalar $parts[1] $registers) -band 0xffffffffL
+                $signedLeft=if($left -ge 0x80000000L) {$left-0x100000000L} else {$left}
+                $signedRight=if($right -ge 0x80000000L) {$right-0x100000000L} else {$right}
+                $equal=$left -eq $right; $less=$signedLeft -lt $signedRight; $unsignedLess=$left -lt $right; $carry=$unsignedLess
+            }
+            'bt' {
+                $bits=Native-Scalar $parts[0] $registers
+                $width=if($parts[0] -match '^(e\w+|r[0-9]+d)$') {32} else {64}
+                $bit=(Native-Scalar $parts[1] $registers) -band ($width-1)
+                $carry=($bits -band (1L -shl $bit)) -ne 0
+            }
+            default {
+                $take=switch($ins.Op) {
+                    'je' {$equal} 'jne' {!$equal} 'jg' {!$equal -and !$less} 'jle' {$equal -or $less}
+                    'ja' {!$equal -and !$unsignedLess} 'jbe' {$equal -or $unsignedLess} 'jae' {!$carry} 'jb' {$carry}
+                    default {throw 'Unknown scalar validator instruction'}
+                }
+                if($null -eq $take) {throw 'Undefined validator flags'}
+                if($take) {$at=$ins.Target}
+            }
+        }
+    }
+    throw 'Validator execution budget exceeded'
+}
+function Native-Validator([uint64]$entry) {
+    # Accept only a finite, side-effect-free integer decision graph. Sentinel checks supplement its shape.
+    $colors=@{}; $pending=[Collections.Generic.Stack[object]]::new(); $pending.Push(@($entry,$false))
+    $hasMv2=$false; $hasTrue=$false; $hasFalse=$false; $returns=0
+    while($pending.Count) {
+        $item=$pending.Pop(); $at=[uint64]$item[0]
+        if($item[1]) {$colors[$at]=2; continue}
+        if($colors[$at] -eq 1) {throw 'Validator graph has a cycle'}
+        if($colors[$at] -eq 2) {continue}
+        if($colors.Count -ge 96) {throw 'Validator graph budget exceeded'}
+        $colors[$at]=1; $ins=Read-Instruction $at; $edges=@($ins.End)
+        $pending.Push(@($at,$true))
+        switch($ins.Op) {
+            'ret' {$returns++; $edges=@()}
+            'nop' {}
+            'mov' {
+                if($ins.Args -match '^al,([01])$') {if($Matches[1] -eq '1') {$hasTrue=$true} else {$hasFalse=$true}}
+                elseif($ins.Args -eq 'ecx,ecx') {}
+                elseif($ins.Args -match '^(rdx|edx|r8|r8d|r9|r9d),[0-9a-f]+h?$') {}
+                else {throw 'Validator has an unknown move'}
+            }
+            'xor' {if($ins.Args -ne 'eax,eax') {throw 'Validator has an unknown write'}; $hasFalse=$true}
+            'cmp' {if($ins.Args -notmatch '^ecx,([0-9a-f]+h?)$') {throw 'Validator compares an unknown input'}; if((Native-Integer $Matches[1]) -eq 0x800000) {$hasMv2=$true}}
+            'bt' {if($ins.Args -notmatch '^(rdx|edx|r8|r8d|r9|r9d),(rcx|ecx)$') {throw 'Validator has an unknown bit test'}}
+            'jmp' {$edges=@($ins.Target)}
+            default {if($ins.Op -notin @('je','jne','jg','jle','ja','jbe','jae','jb')) {throw 'Validator has effects or unsupported instructions'}; $edges+=,$ins.Target}
+        }
+        foreach($edge in $edges) {$pending.Push(@([uint64]$edge,$false))}
+    }
+    if(!$hasMv2 -or !$hasTrue -or !$hasFalse -or !$returns) {throw 'Not a reason validator shape'}
+    $samples=@()
+    foreach($sample in @(0L,1L,3L,6L,0x800000L,0x2000000L,0x7fffffffL,0x80000000L,0xffffffffL)) {
+        $wanted=if($sample -in @(0L,1L,0x800000L,0x2000000L)) {1} else {0}
+        $got=Native-EvaluateValidator $entry $sample
+        if($got -ne $wanted) {throw "Reason validator sentinel mismatch: $sample"}
+        $samples+=[pscustomobject]@{Input=$sample;Return=$got}
+    }
+    return [pscustomobject]@{Kind='reason-validator';Instructions=$colors.Count;Samples=$samples}
+}
+function Native-Callee([uint64]$rva,[string]$kind) {
+    $cacheKey=$kind+':'+$rva
+    if($calleeCache.ContainsKey($cacheKey)) {return $calleeCache[$cacheKey]}
+    $saved=$nativeState.Clone()
+    try {
+        $section=@($pe.ExecutableRanges | Where-Object {$rva -ge $_.VirtualAddress -and $rva -lt $_.VirtualAddress+$_.Length})
+        if($section.Count -ne 1) {throw 'Extra callee is not executable'}
+        $calleeOffset=$section[0].Start+$rva-$section[0].VirtualAddress
+        if($kind -eq 'reason-insert') {
+            if((Native-FunctionSpan $calleeOffset).Begin -ne $imageBase+$rva) {throw 'Reason callee does not start at a runtime function boundary'}
+            $calleeCache[$cacheKey]=Test-Callee $rva $kind
+            return $calleeCache[$cacheKey]
+        }
+        # The pure validator is a leaf function and has no x64 runtime-function entry.
+        $range=@($pe.ExecutableRanges | Where-Object {$rva -ge $_.VirtualAddress -and $rva+4096 -le $_.VirtualAddress+$_.Length})
+        if($range.Count -ne 1) {throw 'Extra callee is outside executable sections'}
+        $nativeState.offset=[long]($range[0].Start+$rva-$range[0].VirtualAddress)
+        $nativeState.lo=$imageBase+$rva; $nativeState.hi=$nativeState.lo+4096; $nativeState.cache=@{}
+        $path=Join-Path $dumpRoot 'validator.dmp'
+        Write-NativeDump $path ([long[]]@($nativeState.offset)) ([uint64[]]@($nativeState.lo))
+        $nativeState.engine=[Mv2NativeDisassembler]::new($path)
+        try {$calleeCache[$cacheKey]=Native-Validator $nativeState.lo; return $calleeCache[$cacheKey]} finally {$nativeState.engine.Dispose()}
+    } finally {foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]}}
+}
+function Native-FunctionSpan([long]$offset) {
+    if(!$nativeState.runtimeFunctions) {
+        $dos=Read-StreamRange $Stream 0 64; $peAt=[BitConverter]::ToInt32($dos,60)
+        $header=Read-StreamRange $Stream $peAt 264
+        $count=[BitConverter]::ToUInt16($header,6); $optional=[BitConverter]::ToUInt16($header,20)
+        if($count -lt 1 -or $count -gt 96 -or $optional -lt 144) {throw 'Invalid runtime directory header'}
+        $sections=Read-StreamRange $Stream ($peAt+24+$optional) (40*$count)
+        $rva=[BitConverter]::ToUInt32($header,160); $size=[BitConverter]::ToUInt32($header,164)
+        if(!$rva -or !$size -or $size%12 -or $size -gt 32MB) {throw 'Invalid runtime directory size'}
+        $matches=@(for($i=0;$i -lt $sections.Length;$i+=40) {
+            $begin=[BitConverter]::ToUInt32($sections,$i+12); $length=[BitConverter]::ToUInt32($sections,$i+16)
+            if($rva -ge $begin -and [long]$rva+$size -le [long]$begin+$length) {[long][BitConverter]::ToUInt32($sections,$i+20)+$rva-$begin}
+        })
+        if($matches.Count -ne 1) {throw 'Runtime directory is not file-backed'}
+        $nativeState.runtimeFunctions=Read-StreamRange $Stream $matches[0] $size
+        if(!$nativeState.runtimeFunctions) {throw 'Truncated runtime directory'}
+    }
+    $data=$nativeState.runtimeFunctions; $rva=ConvertTo-PeRva $pe $offset 1
+    $lo=0; $hi=[int]($data.Length/12)-1
+    while($lo -le $hi) {
+        $mid=[int][Math]::Floor(($lo+$hi)/2); $begin=[BitConverter]::ToUInt32($data,12*$mid); $end=[BitConverter]::ToUInt32($data,12*$mid+4)
+        if($rva -lt $begin) {$hi=$mid-1} elseif($rva -ge $end) {$lo=$mid+1} else {
+            if($end -le $begin -or $end-$begin -gt 4096) {throw 'Reason function exceeds bounded window'}
+            $range=@($pe.ExecutableRanges | Where-Object {$begin -ge $_.VirtualAddress -and $begin+4096 -le $_.VirtualAddress+$_.Length})
+            if($range.Count -ne 1) {throw 'Reason function is not executable'}
+            return [pscustomobject]@{Offset=[long]($range[0].Start+$begin-$range[0].VirtualAddress);Begin=$imageBase+$begin;End=$imageBase+$end}
+        }
+    }
+    throw 'Reason candidate has no runtime function boundary'
+}
+function Native-ReasonOutput($span,[string]$output) {
+    if($output -notin @('rbx','rbp','rsi','rdi','r12','r13','r14','r15')) {throw 'Reason output is not preserved across calls'}
+    $state=@{rcx='arg1';rdx='arg2';r8='arg3';r9='arg4'}; $xmm=@{}; $zeros16=@{}; $zeros8=@{}; $lengthReads=@{}; $prefixCalls=@()
+    $at=$span.Begin; $binding=$null; $origin=$null
+    for($i=0;$i -lt 64;$i++) {
+        $ins=Read-Instruction $at; $at=$ins.End
+        if($ins.Op -match '^j' -or $ins.Op -eq 'ret') {break}
+        if($ins.Op -eq 'call') {
+            $prefixCalls+=[pscustomobject]@{Rva=$ins.Target-$imageBase;This=$state['rcx'];Output=$state['rdx'];Key=$state['r8']}
+            foreach($r in @('rax','rcx','rdx','r8','r9','r10','r11')) {$state[$r]='unknown-call'}; continue
+        }
+        if($ins.Op -eq 'xorps' -and $ins.Args -match '^(xmm\d+),\1$') {$xmm[$Matches[1]]=$true; continue}
+        if($ins.Op -in @('movups','movaps') -and $ins.Args -match '^xmmword ptr (\[[^\]]+\]),(xmm\d+)$') {
+            $where=Resolve-Value $Matches[1] $state; if($xmm[$Matches[2]]) {$zeros16[$where]=$ins.Address}; continue
+        }
+        if($ins.Op -eq 'mov' -and $ins.Args -match '^qword ptr (\[[^\]]+\]),([^,]+)$') {
+            $where=Resolve-Value $Matches[1] $state; $value=Resolve-Value $Matches[2] $state
+            if($value -eq '0') {$zeros8[$where]=$ins.Address}; continue
+        }
+        if($ins.Op -in @('mov','lea') -and $ins.Args -match '^(r\w+|e\w+),') {
+            if($ins.Op -eq 'mov') {$value=Resolve-Value $ins.Args.Split(',')[1] $state; if($value -like 'qword ptr *+8]') {$lengthReads[$value]=$ins.Address}}
+            $dest=Canonical-Register $Matches[1]; Apply-Copy $ins $state
+            if($dest -eq $output) {if($binding) {throw 'Reason output is rebound'}; $binding=$ins.Address; $origin=$state[$output]}
+        } elseif($ins.Op -eq 'xor' -and $ins.Args -match '^([^,]+),\1$') {$state[(Canonical-Register $Matches[1])]='0'}
+        elseif($ins.Op -notin @('push','cmp','test','nop') -and $ins.Args -match '^([re][a-z0-9]+),') {
+            $dest=Canonical-Register $Matches[1]
+            if($dest -ne 'rsp') {$state[$dest]='unknown-write'}
+        }
+    }
+    if(!$binding -or $origin -notin @('arg1','arg2') -or $state[$output] -ne $origin -or
+        !$zeros16.ContainsKey('[{'+$origin+'}]') -or !$zeros8.ContainsKey('[{'+$origin+'}+10h]')) {throw 'Reason output is not an initialized caller-owned set'}
+    $role=$null
+    if($prefixCalls.Count -eq 0 -and $origin -eq 'arg1' -and $lengthReads.ContainsKey('qword ptr [{arg2}+8]')) {$role='set-to-set'}
+    elseif($prefixCalls.Count -eq 1 -and $origin -eq 'arg2') {
+        $source=$prefixCalls[0]; $local=$source.Output
+        if($source.This -eq 'arg1' -and $source.Key -eq 'arg3' -and $local -match '^\[rsp\+[0-9a-f]+h\]$' -and
+            $zeros16.ContainsKey('[{'+$local+'}]') -and $zeros8.ContainsKey('[{'+$local+'}+10h]') -and $lengthReads.ContainsKey('qword ptr [{'+$local+'}+8]')) {$role='read-then-collapse'}
+    }
+    if(!$role) {throw 'Reason caller input/output roles disagree'}
+    # Decode the bounded function, requiring the same preserved output and a pointer-return epilogue.
+    $at=$span.Begin; $returnCopy=$null; $ret=$null; $afterCopy=$false
+    while($at -lt $span.End) {
+        $ins=Read-Instruction $at; $at=$ins.End
+        if($ins.Op -eq 'mov' -and $ins.Args -eq "rax,$output") {
+            if($returnCopy) {throw 'Multiple reason return copies'}; $returnCopy=$ins.Address; $afterCopy=$true; continue
+        }
+        if($ins.Op -eq 'ret') {
+            if(!$afterCopy -or $ret) {throw 'Reason function does not return its output pointer'}
+            $ret=$ins.Address; $afterCopy=$false; continue
+        }
+        if($afterCopy -and !($ins.Op -in @('pop','nop') -or ($ins.Op -eq 'add' -and $ins.Args -match '^rsp,') -or ($ins.Op -in @('movaps','movups') -and $ins.Args -match '^xmm\d+,xmmword ptr \[rsp'))) {throw 'Reason pointer return has unknown effects'}
+        if($ins.Address -ne $binding -and $ins.Op -notin @('push','pop','cmp','test','nop') -and $ins.Op -notmatch '^j' -and $ins.Args -match '^([re][a-z0-9]+),') {
+            if((Canonical-Register $Matches[1]) -eq $output) {throw 'Caller-owned reason output was overwritten'}
+        }
+    }
+    if(!$returnCopy -or !$ret) {throw 'No caller-owned set return'}
+    return [pscustomobject]@{Kind='caller-owned-set-return';Role=$role;Argument=$origin;OutputRegister=$output;FunctionRva=$span.Begin-$imageBase;SourceCalls=$prefixCalls;
+        BindingOffset=$span.Offset+$binding-$span.Begin;ReturnOffset=$span.Offset+$returnCopy-$span.Begin;
+        Zero16Offset=$span.Offset+$zeros16['[{'+$origin+'}]']-$span.Begin;Zero8Offset=$span.Offset+$zeros8['[{'+$origin+'}+10h]']-$span.Begin}
+}
+function Native-Reason([uint64]$Address) {
+    $span=Native-FunctionSpan $nativeState.offset
+    $saved=$nativeState.Clone(); $window=[long]$span.Offset
+    try {
+        $nativeState.offset=$window; $nativeState.lo=$span.Begin; $nativeState.hi=$span.End; $nativeState.cache=@{}
+        $path=Join-Path $dumpRoot 'reason.dmp'
+        Write-NativeDump $path ([long[]]@($window)) ([uint64[]]@($nativeState.lo))
+        $nativeState.engine=[Mv2NativeDisassembler]::new($path)
+        try {
+            $entry=Read-Instruction $Address
+            if($entry.Op -ne 'mov' -or $entry.Args -notmatch '^ecx,(e\w+|r[0-9]+d)$') {throw 'No reason-validation argument'}
+            $reasonReg=$Matches[1]; $reasonCanonical=Canonical-Register $reasonReg
+            $call=Next-Real $entry.End
+            if($call.Op -ne 'call' -or !$call.Target) {throw 'No direct reason validator'}
+            $test=Next-Real $call.End; $j=Next-Real $test.End
+            if($test.Op -ne 'test' -or $test.Args -ne 'al,al' -or $j.Op -notin @('je','jne')) {throw 'Reason validation result is not tested'}
+            $valid=if($j.Op -eq 'jne') {$j.Target} else {$j.End}
+            $invalid=if($j.Op -eq 'je') {$j.Target} else {$j.End}
+            $bad=Next-Real $invalid
+            if($bad.Op -ne 'mov' -or $bad.Args -notmatch '^(dword ptr \[rsp\+[0-9a-f]+h\]),2000000h$') {throw 'Unknown reason is not stored in a stack slot'}
+            $slot=$Matches[1]
+            $good=Next-Real $valid
+            if($good.Op -ne 'mov' -or $good.Args -ne "$slot,$reasonReg") {throw 'Valid reason does not use the same slot and value'}
+            $join=(Next-Real $bad.End).Address
+            if((Next-Real $good.End).Address -ne $join) {throw 'Reason stores do not converge'}
+            $setup=Read-CallSetup $join
+            foreach($reg in @('rcx','rdx','r8','r9')) {if($setup.State[$reg] -notmatch '^r\w+$') {throw 'Unknown reason insertion argument'}}
+            if($setup.State['r8'] -ne $setup.State['r9'] -or $setup.State['rcx'] -eq $setup.State['rdx']) {throw 'Reason insertion arguments disagree'}
+            $outputEvidence=Native-ReasonOutput $span $setup.State['rcx']
+            $advance=Next-Real $setup.Call.End
+            if($advance.Op -ne 'add' -or $advance.Args -notmatch '^(r\w+),4$') {throw 'Reason iterator stride changed'}
+            $iterator=$Matches[1]; $limit=Next-Real $advance.End; $repeat=Next-Real $limit.End
+            if($limit.Op -ne 'cmp' -or $limit.Args -notmatch '^([^,]+),([^,]+)$' -or $iterator -notin @($Matches[1],$Matches[2]) -or $Matches[1] -eq $Matches[2] -or $repeat.Op -ne 'jne') {throw 'No bounded reason iterator comparison'}
+            $load=Next-Real $repeat.Target
+            if($load.Op -ne 'mov' -or $load.Args -notmatch ('^'+[regex]::Escape($reasonReg)+',dword ptr \[([^\]]+)\]$')) {throw 'Reason loop has no element load'}
+            $addressRegs=$Matches[1].Split('+')
+            if($addressRegs.Count -gt 2 -or $iterator -notin $addressRegs -or @($addressRegs | Where-Object {$_ -notin @('rbx','rbp','rsi','rdi','r12','r13','r14','r15')}).Count -or (Next-Real $load.End).Address -ne $entry.Address) {throw 'Reason loop does not reload the validated element'}
+            # Require a visible, unmodified LEA tying the insertion key pointer to the written slot.
+            $pointer=$setup.State['r8']; $slotAddress=$slot.Substring('dword ptr '.Length); $bound=$false
+            for($at=$nativeState.lo;$at -lt $load.Address;$at++) {
+                try {
+                    $decoded=$nativeState.engine.Decode($at)
+                    if($decoded.Text -notmatch '\slea\s+' -or !$decoded.Text.EndsWith("$pointer,$slotAddress")) {continue}
+                    $lea=Read-Instruction $at
+                } catch {continue}
+                if($lea.Op -ne 'lea' -or $lea.Args -ne "$pointer,$slotAddress") {continue}
+                $p=$lea.End; $safe=$true
+                for($n=0;$n -lt 48 -and $p -lt $load.Address;$n++) {
+                    $ins=Read-Instruction $p
+                    if($ins.Op -eq 'call' -or $ins.Op -eq 'jmp' -or $ins.Op -match '^(ret|int)$') {$safe=$false; break}
+                    if($ins.Op -notin @('cmp','test','push','nop') -and $ins.Op -notmatch '^j' -and $ins.Args -match '^([re][a-z0-9]+)(?:,|$)') {
+                        if((Canonical-Register $Matches[1]) -eq $pointer) {$safe=$false; break}
+                    }
+                    $p=$ins.End
+                }
+                if($safe -and $p -eq $load.Address) {$bound=$true; break}
+            }
+            if(!$bound) {throw 'Reason stack key pointer is not bound in the local context'}
+            $regs=@('rax','rcx','rdx','rbx','rsp','rbp','rsi','rdi','r8','r9','r10','r11','r12','r13','r14','r15')
+            $id=[Array]::IndexOf($regs,$reasonCanonical)
+            if($id -lt 0 -or $reasonCanonical -in @('rax','rcx','rdx','r8','r9','r10','r11','rsp')) {throw 'Reason value is not in a preserved register'}
+            $replacement=[Collections.Generic.List[byte]]::new()
+            if($id -ge 8) {$replacement.Add(0x41)}
+            $replacement.Add(0x81); $replacement.Add([byte](0xf8+($id-band 7)))
+            $replacement.AddRange([BitConverter]::GetBytes([int]0x800000)); $replacement.AddRange([byte[]]@(0x0f,0x95,0xc0))
+            $relValid=[long]$good.Address-([long]$Address+$replacement.Count+2)
+            if($relValid -lt -128 -or $relValid -gt 127) {throw 'Reason valid branch exceeds short range'}
+            $replacement.Add(0x75); $replacement.Add([byte]($relValid-band 255))
+            $relSkip=[long]$advance.Address-([long]$Address+$replacement.Count+2)
+            if($relSkip -lt -128 -or $relSkip -gt 127) {throw 'Reason skip branch exceeds short range'}
+            $replacement.Add(0xeb); $replacement.Add([byte]($relSkip-band 255))
+            if($Address+$replacement.Count -ge [Math]::Min($good.Address,$join)) {throw 'Reason patch overlaps a live destination'}
+            $record=[pscustomobject]@{Name='ignore-mv2-disable-reason-at-runtime';Offset=[long]$saved.offset;PatchOffset=[long]$saved.offset;
+                Replacement=$replacement.ToArray();CallRva=$null;NormalCallRva=$null;
+                ExtraEvidence=[pscustomobject]@{ReasonRegister=$reasonReg;Slot=$slot;ValidatorRva=$call.Target-$imageBase;InsertRva=$setup.Call.Target-$imageBase;
+                    LoopRva=$load.Address-$imageBase;ContinueRva=$advance.Address-$imageBase;Validator=$null;Insert=$null;Output=$outputEvidence};
+                UnknownStoreOffset=$window+$bad.Address-$nativeState.lo;ValidStoreOffset=$window+$good.Address-$nativeState.lo;
+                CallOffset=$window+$call.Address-$nativeState.lo;AdvanceOffset=$window+$advance.Address-$nativeState.lo;
+                InsertSetupOffset=$window+$join-$nativeState.lo;LoopOffset=$window+$load.Address-$nativeState.lo}
+        } finally {$nativeState.engine.Dispose(); $nativeState.engine=$null}
+        $record.ExtraEvidence.Validator=Native-Callee $record.ExtraEvidence.ValidatorRva 'reason-validator'
+        $record.ExtraEvidence.Insert=Native-Callee $record.ExtraEvidence.InsertRva 'reason-insert'
+        return $record
+    } finally {foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]}}
+}
+function Read-Instruction([uint64]$Address) {
+    if($Address -lt $nativeState.lo -or $Address -ge $nativeState.hi) { throw 'Trace leaves bounded snippet' }
+    if($nativeState.cache.ContainsKey($Address)) { return $nativeState.cache[$Address] }
+    if($nativeState.cache.Count -ge 128) { throw 'Instruction budget exceeded' }
+    $decoded=$nativeState.engine.Decode($Address)
+    if($decoded.End -gt $nativeState.hi) { throw 'Truncated instruction' }
+    $nativeState.cache[$Address]=$decoded; $nativeState.decodeCount++
+    return $decoded
+}
+
+function Read-Linear([uint64]$Address,[int]$Count) {
+    $seen=@{}
+    for($n=0;$n -lt $Count;$n++) {
+        if($seen.ContainsKey($Address)) { throw 'Loop rejected' }; $seen[$Address]=$true
+        $ins=Read-Instruction $Address
+        if($ins.Op -eq 'jmp') { $Address=[uint64]$ins.Target; continue }
+        $ins
+        if($ins.Op -match '^(ret|int)') { break }
+        $Address=$ins.End
+    }
+}
+
+function Canonical-Register([string]$reg) {
+    switch -Regex ($reg) {
+        '^e(ax|bx|cx|dx|si|di|bp|sp)$' { return 'r'+$reg.Substring(1) }
+        '^(r[0-9]+)d$' { return $Matches[1] }
+        '^r(ax|bx|cx|dx|si|di|bp|sp|[0-9]+)$' { return $reg }
+        default { throw "Unsupported register: $reg" }
+    }
+}
+function Resolve-Value([string]$arg,[hashtable]$state) {
+    if($arg -match '^(r\w+|e\w+)$') {
+        $r=Canonical-Register $arg
+        $value=if($state.ContainsKey($r)) {$state[$r]} else {$r}
+        if($arg -match '^(e\w+|r[0-9]+d)$' -and $value -notmatch '^(dword ptr |low32\(|[0-9a-f]+h?$)') {return "low32($value)"}
+        return $value
+    }
+    if($arg -match '^(?:(?:qword|dword|byte) ptr )?\[.*\]$') {
+        return [regex]::Replace($arg,'\br(?:[0-9]+|ax|bx|cx|dx|si|di|bp|sp)\b',{
+            param($m) if($state.ContainsKey($m.Value)) {'{'+$state[$m.Value]+'}'} else {$m.Value}
+        })
+    }
+    if($arg -match '^[0-9a-f]+h?$') {return $arg}
+    throw "Unsupported value: $arg"
+}
+function Apply-Copy($ins,[hashtable]$state) {
+    if($ins.Op -eq 'nop') {return}
+    if($ins.Op -notin @('mov','lea') -or $ins.Args -notmatch '^(r\w+|e\w+),(.+)$') {throw "Unsupported copy: $($ins.Text)"}
+    $dest=Canonical-Register $Matches[1]; $src=$Matches[2]
+    $value=Resolve-Value $src $state
+    if($ins.Op -eq 'lea' -and $src -notmatch '^\[') {throw 'Unsupported LEA'}
+    if($ins.Args.Split(',')[0] -match '^(e\w+|r[0-9]+d)$' -and $value -notmatch '^(dword ptr |low32\(|[0-9a-f]+h?$)') {$value="low32($value)"}
+    $state[$dest]=$value
+}
+function Next-Real([uint64]$at) {
+    $seen=@{}
+    for($i=0;$i -lt 12;$i++) {
+        if($seen.ContainsKey($at)) {throw 'Jump cycle'}; $seen[$at]=$true
+        $ins=Read-Instruction $at
+        if($ins.Op -eq 'jmp') {$at=[uint64]$ins.Target}
+        elseif($ins.Op -eq 'nop') {$at=$ins.End}
+        else {return $ins}
+    }
+    throw 'Jump budget exceeded'
+}
+function Flow-StackOperand([string]$arg,[int]$sp) {
+    if($arg -notmatch '^(?:(qword|dword) ptr )?\[rsp(?:\+([0-9a-f]+)(h)?)?\]$') {return $null}
+    $width=switch($Matches[1]) {'qword' {8} 'dword' {4} default {0}}
+    $disp=0
+    if($Matches[2]) {$disp=if($Matches[3]) {[Convert]::ToInt32($Matches[2],16)} else {[int]$Matches[2]}}
+    return [pscustomobject]@{Offset=$sp+$disp;Width=$width}
+}
+function Flow-Copy($ins,$frame) {
+    $parts=$ins.Args.Split(','); if($parts.Count -ne 2) {throw 'Unsupported flow copy'}
+    $dest=$parts[0]; $src=$parts[1]
+    $slot=Flow-StackOperand $dest $frame.SP
+    if($slot -and $slot.Width -gt 0) {
+        if($ins.Op -ne 'mov' -or $slot.Offset -lt $frame.SP -or $slot.Offset+$slot.Width -gt 0) {throw 'Store is not in freshly allocated scratch stack'}
+        if($src -notmatch '^(r\w+|e\w+|[0-9a-f]+h?)$') {throw 'Unsupported stack store source'}
+        $value=Resolve-Value $src $frame.State
+        foreach($key in @($frame.Slots.Keys)) {
+            $old=$frame.Slots[$key]
+            if($slot.Offset -lt $key+$old.Width -and $key -lt $slot.Offset+$slot.Width) {$frame.Slots.Remove($key)}
+        }
+        $frame.Slots[$slot.Offset]=[pscustomobject]@{Width=$slot.Width;Value=$value}
+        $frame.Spills++
+        return
+    }
+    if($dest -notmatch '^(r\w+|e\w+)$' -or (Canonical-Register $dest) -eq 'rsp') {throw 'Unknown memory write or stack-pointer overwrite'}
+    $sourceSlot=Flow-StackOperand $src $frame.SP
+    if($sourceSlot -and $ins.Op -eq 'mov' -and $sourceSlot.Width -gt 0) {
+        if(!$frame.Slots.ContainsKey($sourceSlot.Offset) -or $frame.Slots[$sourceSlot.Offset].Width -ne $sourceSlot.Width) {throw 'Stack reload has no intact matching store'}
+        $value=$frame.Slots[$sourceSlot.Offset].Value
+        if($dest -match '^(e\w+|r[0-9]+d)$' -and $value -notmatch '^(dword ptr |low32\(|[0-9a-f]+h?$)') {$value="low32($value)"}
+        $frame.State[(Canonical-Register $dest)]=$value
+        return
+    }
+    if($src -match '\brsp\b') {
+        if(!$sourceSlot -or $ins.Op -ne 'lea') {throw 'Unknown stack read or stack address escape'}
+        if($sourceSlot.Offset -lt 0) {throw 'Scratch stack address escapes into a register'}
+        $canonical='[rsp+'+$sourceSlot.Offset.ToString('X')+'h]'
+        $copy=[pscustomobject]@{Op='lea';Args="$dest,$canonical";Text=$ins.Text}
+        Apply-Copy $copy $frame.State
+        return
+    }
+    # A pointer to scratch storage cannot be created, and indirect writes are rejected above.
+    Apply-Copy $ins $frame.State
+}
+function Read-CallSetup([uint64]$at) {
+    # ponytail: finite call-setup CFG only, no loops, no calls before scratch is released.
+    # Existing-frame spills and escaped/aliased stack slots need liveness/alias analysis later.
+    $pending=[Collections.Generic.Stack[object]]::new()
+    $pending.Push([pscustomobject]@{At=$at;State=@{};Slots=@{};SP=0;Seen=@{};Items=@();Spills=0;Steps=0})
+    $leaves=@(); $forks=0; $steps=0
+    while($pending.Count) {
+        $f=$pending.Pop()
+        while($true) {
+            if(++$steps -gt 128 -or ++$f.Steps -gt 48) {throw 'Call-setup instruction budget exceeded'}
+            if($f.Seen.ContainsKey($f.At)) {throw 'Call-setup cycle'}
+            $f.Seen[$f.At]=$true
+            $ins=Read-Instruction $f.At; $f.Items+=,$ins
+            if($ins.Op -eq 'jmp') {$f.At=[uint64]$ins.Target; continue}
+            if($ins.Op -eq 'nop') {$f.At=$ins.End; continue}
+            if($ins.Op -match '^j') {
+                if(++$forks -gt 7) {throw 'Call-setup path budget exceeded'}
+                $pending.Push([pscustomobject]@{At=[uint64]$ins.Target;State=$f.State.Clone();Slots=$f.Slots.Clone();SP=$f.SP;Seen=$f.Seen.Clone();Items=@($f.Items);Spills=$f.Spills;Steps=$f.Steps})
+                $f.At=$ins.End; continue
+            }
+            if($ins.Op -eq 'call') {
+                if(!$ins.Target) {throw 'Indirect call rejected'}
+                if($f.SP -ne 0 -or $f.Slots.Count) {throw 'Scratch stack live across call'}
+                $leaves+=,[pscustomobject]@{Call=$ins;State=$f.State;Items=$f.Items;After=(Next-Real $ins.End);Spills=$f.Spills}
+                break
+            }
+            if($ins.Op -in @('sub','add') -and $ins.Args -match '^rsp,([0-9a-f]+)(h)?$') {
+                $amount=if($Matches[2]) {[Convert]::ToInt32($Matches[1],16)} else {[int]$Matches[1]}
+                if($amount -le 0 -or $amount%16) {throw 'Unsupported scratch allocation alignment'}
+                $f.SP+=if($ins.Op -eq 'sub') {-$amount} else {$amount}
+                if($f.SP -gt 0 -or $f.SP -lt -256) {throw 'Scratch stack allocation budget exceeded'}
+                foreach($key in @($f.Slots.Keys)) {if($key -lt $f.SP) {$f.Slots.Remove($key)}}
+            } elseif($ins.Op -in @('cmp','test') -and $ins.Args -match '^[re][a-z0-9]+,(?:[re][a-z0-9]+|[0-9a-f]+h?)$') {
+                # Both outcomes are explored; no assumption about the value of this condition.
+            } elseif($ins.Op -in @('mov','lea')) {Flow-Copy $ins $f}
+            else {throw "Unsupported call-setup instruction: $($ins.Text)"}
+            $f.At=$ins.End
+        }
+    }
+    if(!$leaves.Count) {throw 'No bounded direct call'}
+    $first=$leaves[0]
+    foreach($leaf in $leaves) {
+        if($leaf.Call.Address -ne $first.Call.Address) {throw 'Paths reach different calls'}
+        foreach($key in @(@($first.State.Keys)+@($leaf.State.Keys) | Sort-Object -Unique)) {
+            if((Resolve-Value $key $first.State) -ne (Resolve-Value $key $leaf.State)) {throw "Path-dependent register value: $key"}
+        }
+    }
+    $first | Add-Member NoteProperty Paths $leaves.Count
+    $first | Add-Member NoteProperty TotalSpills (($leaves | Measure-Object Spills -Sum).Sum)
+    return $first
+}
+function Classify-Candidate([uint64]$Address) {
+    $state=@{}; $first=Next-Real $Address
+    if($first.Op -ne 'cmp' -or $first.Args -notmatch '^(.+),2$') {throw 'No manifest comparison'}
+    $manifest=Resolve-Value $Matches[1] $state
+    $guard=Next-Real $first.End
+    if($guard.Op -eq 'jg') {$normal=Next-Real ([uint64]$guard.Target); $at=$guard.End}
+    elseif($guard.Op -eq 'jle') {$normal=Next-Real $guard.End; $at=[uint64]$guard.Target}
+    else {throw 'Unsupported manifest guard'}
+    $location=@{}; $typeValue=$null; $typeOther=$null; $overrideTarget=$null; $locationEntry=$null; $seen=@{}
+    for($i=0;$i -lt 32;$i++) {
+        $ins=Next-Real $at
+        if($seen.ContainsKey($ins.Address)) {throw 'Predicate cycle'}; $seen[$ins.Address]=$true
+        if($ins.Op -in @('mov','lea')) {Apply-Copy $ins $state; $at=$ins.End; continue}
+        if($ins.Op -ne 'cmp' -or $ins.Args -notmatch '^(.+),(0|1|5|0Ah)$') {throw 'Unsupported predicate'}
+        $operand=$Matches[1]; $value=$Matches[2]; $origin=Resolve-Value $operand $state
+        $branch=Next-Real $ins.End
+        if($branch.Op -notin @('je','jne')) {throw 'Predicate is not equality'}
+        $equal=if($branch.Op -eq 'je') {[uint64]$branch.Target} else {$branch.End}
+        $other=if($branch.Op -eq 'jne') {[uint64]$branch.Target} else {$branch.End}
+        if($value -eq '0') {
+            if($overrideTarget -or $operand -notlike 'byte ptr *' -or $typeValue -or $location.Count) {throw 'Unexpected override'}
+            $overrideTarget=$other; $at=$equal; continue
+        }
+        if($value -eq '1') {
+            if($typeValue -or $location.Count) {throw 'Duplicate or late type predicate'}
+            $typeValue=$origin; $typeOther=(Next-Real $other).Address; $at=$equal; $afterType=(Next-Real $equal).Address; continue
+        }
+        if(!$typeValue -or $location.ContainsKey($value)) {throw 'Missing type or duplicate location'}
+        if(!$locationEntry) {$locationEntry=$ins.Address}
+        if((Next-Real $equal).Address -ne $normal.Address) {throw 'Unaffected destinations differ'}
+        $location[$value]=[pscustomobject]@{Origin=$origin;Compare=$ins;Branch=$branch}
+        $at=$other
+        if($location.Count -eq 2) {break}
+    }
+    if($location.Count -ne 2 -or $location['5'].Origin -ne $location['0Ah'].Origin -or
+        $location['5'].Origin -eq $typeValue -or $typeValue -eq $manifest) {throw 'Predicate value flow mismatch'}
+    # The two enum fields must originate from the same object, even after register copies.
+    if($manifest -like 'dword ptr *') {
+        if($location['5'].Origin -notmatch '^dword ptr \[\{(.+)\}\+[0-9a-f]+h\]$') {throw 'Unknown location object'}
+        $locationObject=$Matches[1]
+        if($typeValue -notmatch '^dword ptr \[\{(.+)\}\+[0-9a-f]+h\]$' -or $Matches[1] -ne $locationObject) {throw 'Type and location come from different objects'}
+    } elseif($location['5'].Origin -notmatch '^dword ptr \[r\w+\+[0-9a-f]+h\]$' -or $typeValue -notmatch '^low32\(r\w+\)$') {
+        throw 'Unknown live-in predicate values'
+    }
+    # Register-form predicates have live-in values whose definitions precede this window.
+    # Keep their distinct-value checks and require the same caller/callee evidence below.
+    if($overrideTarget -and (Next-Real $overrideTarget).Address -ne $afterType) {throw 'Override does not join location check'}
+    $effect=Read-CallSetup $at
+    if($typeOther -eq $effect.Items[0].Address) {throw 'Type exclusion enters MV2 effect'}
+    $unaffected=@(Read-Linear $normal.Address 10)
+    $kind=$null; $normalCall=$null
+    # Keep tree-node and result-use checks; argument instruction order is no longer fixed.
+    if($unaffected[0].Op -eq 'mov' -and $unaffected[0].Args -match '^(r\w+),qword ptr \[(r\w+)\+8\]$') {
+        $loaded=$Matches[1]; $node=$Matches[2]
+        if($unaffected[1].Op -ne 'test' -or $unaffected[1].Args -ne "$loaded,$loaded" -or
+            @($unaffected | Where-Object {$_.Op -eq 'jne' -and $_.Target -lt $_.Address}).Count -eq 0 -or
+            $effect.State['r8'] -ne "[$node+38h]" -or
+            $effect.State['rcx'] -notmatch '^r\w+$' -or $effect.State['rdx'] -notmatch '^r\w+$' -or
+            $effect.State['rcx'] -eq $effect.State['rdx'] -or $effect.After.Address -ne $normal.Address) {throw 'Startup argument or continuation mismatch'}
+        $kind='skip-startup-disable'
+    } else {
+        $normalCall=Read-CallSetup $normal.Address
+        if($effect.State['rcx'] -notmatch '^\[rsp\+[0-9a-f]+h\]$' -or
+            $effect.State['rdx'] -notmatch '^[0-9a-f]+h$' -or
+            $normalCall.State['r8'] -ne $effect.State['rcx'] -or
+            $normalCall.State['rcx'] -notmatch '^r\w+$' -or $normalCall.State['rdx'] -notmatch '^r\w+$' -or
+            $normalCall.Call.Target -eq $effect.Call.Target) {throw 'Install argument flow mismatch'}
+        $postBad=@(Read-Linear $effect.Call.End 3)
+        $postGood=@(Read-Linear $normalCall.Call.End 3)
+        if($postBad[0].Op -ne 'lea' -or $postGood[0].Op -ne 'lea' -or
+            $postBad[0].Args -notmatch '^(r\w+),\[rsp\+[0-9a-f]+h\]$') {throw 'No bounded false result storage'}
+        $badreg=$Matches[1]
+        if($postGood[0].Args -notmatch '^(r\w+),\[rsp\+[0-9a-f]+h\]$') {throw 'No bounded returned result storage'}
+        $goodreg=$Matches[1]
+        if($postBad[1].Op -ne 'mov' -or $postBad[1].Args -ne "byte ptr [$badreg-8],0" -or
+            $postGood[1].Op -ne 'mov' -or $postGood[1].Args -ne "byte ptr [$goodreg-8],al") {throw 'Return value/false result mismatch'}
+        $kind='allow-install-policy-inline'
+    }
+    if($Inspect) {@($nativeState.cache.Values | Sort-Object Address) | ForEach-Object {$_.Text} | Out-Host}
+    $patchAt=$nativeState.offset+$guard.Address-$Address
+    $length=[int]($guard.End-$guard.Address)
+    $replacement=[byte[]]::new($length)
+    if($guard.Op -eq 'jle') {for($i=0;$i -lt $length;$i++) {$replacement[$i]=0x90}}
+    elseif($length -eq 2) {$replacement[0]=0xeb; $replacement[1]=[byte](($guard.Target-$guard.End) -band 255)}
+    elseif($length -eq 6) {
+        $replacement[0]=0xe9; [Array]::Copy([BitConverter]::GetBytes([int]($guard.Target-($guard.Address+5))),0,$replacement,1,4); $replacement[5]=0x90
+    } else {throw 'Unsupported patch encoding'}
+    [pscustomobject]@{
+        Name=$kind;Offset=$nativeState.offset;PatchOffset=$patchAt;Replacement=@($replacement);
+        UnaffectedRva=($normal.Address-$imageBase);AffectedRva=($effect.Items[0].Address-$imageBase);
+        CallRva=($effect.Call.Target-$imageBase);CallOffset=($nativeState.offset+$effect.Call.Address-$Address);
+        NormalCallRva=if($normalCall) {$normalCall.Call.Target-$imageBase} else {$null};
+        FlowPaths=$effect.Paths;FlowSpills=$effect.TotalSpills;Arguments=$effect.State;PredicateLocation=$location['5'].Origin;PredicateType=$typeValue;
+        FiveOffset=($nativeState.offset+$location['5'].Compare.Address-$Address);
+        TenOffset=($nativeState.offset+$location['0Ah'].Compare.Address-$Address);
+        Decoded=$nativeState.cache.Count
+    }
+}
+function Test-Callee([uint64]$rva,[string]$kind) {
+    $range=@($pe.ExecutableRanges | Where-Object {$rva -ge $_.VirtualAddress -and $rva+4096 -le $_.VirtualAddress+$_.Length})
+    if($range.Count -ne 1) {throw 'Call target outside executable section'}
+    $nativeState.offset=[long]($range[0].Start+$rva-$range[0].VirtualAddress)
+    $nativeState.lo=$imageBase+$rva; $nativeState.hi=$nativeState.lo+4096; $nativeState.cache=@{}
+    $path=Join-Path $dumpRoot 'callee.dmp'
+    Write-NativeDump $path ([long[]]@($nativeState.offset)) ([uint64[]]@($nativeState.lo))
+    $nativeState.engine=[Mv2NativeDisassembler]::new($path)
+    $state=@{}; $at=$nativeState.lo; $facts=@{}; $items=@(); $returned=$false
+    try {
+        # ponytail: inspect one linear prefix through its first RET, max 64 instructions.
+        # This is extra structural evidence, not a proof of all callee paths or identity.
+        for($i=0;$i -lt 64;$i++) {
+            $ins=Read-Instruction $at; $items+=$ins.Text; $at=$ins.End
+            if($ins.Op -eq 'ret') {$returned=$true; break}
+            if($ins.Op -eq 'call') {
+                if($ins.Target -and $state['r8'] -eq 'low32(rdx)' -and $state['rdx'] -eq 'rcx') {$facts.ForwardResource=$true}
+                foreach($r in @('rax','rcx','rdx','r8','r9','r10','r11')) {$state[$r]='unknown-call'}
+                continue
+            }
+            if($ins.Op -eq 'mov' -and $ins.Args -match '^(.+),(.+)$') {
+                $dest=$Matches[1]; $src=$Matches[2]
+                try {$origin=Resolve-Value $src $state} catch {$origin='unknown'}
+                if($origin -eq 'qword ptr [rcx]') {$facts.VectorBegin=$true}; if($origin -eq 'qword ptr [rcx+8]') {$facts.VectorLength=$true}; if($origin -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.IntKey=$true}; if($origin -eq 'qword ptr [rdx+8]' -or $origin -eq 'qword ptr [{rdx}+8]') {$facts.TreeRoot=$true}
+                if($origin -eq 'qword ptr [r8]' -or $origin -eq 'qword ptr [{r8}]') {$facts.Key=$true}
+                if($origin -match '^qword ptr \[rdx\+') {$facts.PolicyObject=$true}
+                if($dest -match '^(r\w+|e\w+)$') {
+                    try {$state[(Canonical-Register $dest)]=$origin} catch {}
+                } else {
+                    try {$where=Resolve-Value $dest $state} catch {$where='unknown'}
+                    if($where -eq 'qword ptr [{rdx}]') {$facts.VectorResult=$true}; if($where -eq 'byte ptr [{rdx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.VectorFlag=$true}; if($where -eq 'qword ptr [{rcx}]') {$facts.WriteNode=$true}
+                    if($where -eq 'byte ptr [{rcx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.WriteInserted=$true}
+                    if($where -eq 'qword ptr [{rcx}+10h]' -and $src -eq '0') {$facts.ClearString=$true}
+                }
+                continue
+            }
+            if($ins.Op -eq 'xor' -and $ins.Args -match '^([^,]+),\1$') {
+                try {$state[(Canonical-Register $Matches[1])]='0'} catch {}
+            } elseif($ins.Op -notin @('push','pop','cmp','test','nop') -and $ins.Op -notmatch '^j' -and $ins.Args -match '^([re][a-z0-9]+),') {
+                try {$state[(Canonical-Register $Matches[1])]='unknown-write'} catch {}
+            }
+            if($ins.Op -eq 'lea' -and $ins.Args -match '\*4\]') {$facts.Scale4=$true}; if($ins.Op -eq 'cmp' -and $ins.Args -match '^dword ptr \[.+\],(r\w+d)$' -and (Resolve-Value $Matches[1] $state) -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.CompareKey=$true}; if($ins.Op -eq 'cmp' -and $ins.Args -match ',5$') {$facts.ComponentPolicy=$true}
+        }
+        $facts.ReturnsOutput=$state['rax'] -eq 'rcx'
+        if(!$returned) {throw 'Callee return outside instruction budget'}
+        $accepted=switch($kind) {
+            'skip-startup-disable' {$facts.TreeRoot -and $facts.Key -and $facts.WriteNode -and $facts.WriteInserted -and $facts.ReturnsOutput}
+            'allow-install-policy-inline' {$facts.ForwardResource -and $facts.ClearString -and $facts.ReturnsOutput}
+            'normal-policy' {$facts.PolicyObject -and $facts.ComponentPolicy}
+'reason-insert' {$facts.VectorBegin -and $facts.VectorLength -and $facts.IntKey -and $facts.Scale4 -and $facts.CompareKey -and $facts.VectorResult -and $facts.VectorFlag -and $state['rax'] -eq 'rdx'}
+        }
+        if(!$accepted) {throw "Callee shape mismatch: $kind / $($facts | ConvertTo-Json -Compress)"}
+        return [pscustomobject]@{Rva=$rva;Kind=$kind;Facts=$facts;Instructions=$items}
+    } finally {$nativeState.engine.Dispose()}
+}
+
+    function Write-NativeDump([string]$path,[long[]]$offsets,[uint64[]]$addresses) {
+        $packed=[byte[]]::new(4096*$offsets.Count); $local=[long[]]::new($offsets.Count)
+        for($i=0;$i -lt $offsets.Count;$i++) {
+            $part=Read-StreamRange $Stream $offsets[$i] 4096
+            if($null -eq $part) {throw 'Truncated native snippet'}
+            $local[$i]=4096*$i; [Array]::Copy($part,0,$packed,4096*$i,4096)
+        }
+        [Mv2SnippetDump]::Write($path,$packed,$local,$addresses,$imageBase)
+    }
+    try {
+        $seeds=[Collections.Generic.HashSet[long]]::new(); $block=4MB
+        $buffer=[byte[]]::new($block+4097)
+        foreach($range in $pe.ExecutableRanges) {
+            $end=$range.Start+$range.Length
+            for($core=$range.Start;$core -lt $end;$core+=$block) {
+                $coreEnd=[Math]::Min($end,$core+$block); $begin=[Math]::Max($range.Start,$core-1)
+                $count=[int]([Math]::Min($end,$coreEnd+4096)-$begin)
+                $Stream.Position=$begin; $read=0
+                while($read -lt $count) {$n=$Stream.Read($buffer,$read,$count-$read); if($n -le 0) {throw 'Short native scan read'}; $read+=$n}
+                $hits=@()
+                if($traceManifests) {$hits+=[Mv2SmallScan]::Seeds($buffer,0,$count)}
+                if($traceReasons) {$hits+=[Mv2SmallScan]::Reasons($buffer,$count)}
+                foreach($hit in $hits) {
+                    $absolute=$begin+$hit
+                    if($absolute -ge $core -and $absolute -lt $coreEnd) {[void]$seeds.Add($absolute)}
+                }
+                if($seeds.Count -gt 64) {throw 'Native candidate budget exceeded'}
+            }
+        }
+        $offsets=@($seeds | Sort-Object)
+        if(!$offsets.Count) {throw 'No bounded native candidates'}
+        # Release streamed scan buffers before DbgEng's native allocations overlap them.
+        $buffer=$null
+        if($RuleNames.Count -lt $supported.Count) {[GC]::Collect()}
+        $addresses=@(foreach($off in $offsets) {$imageBase+[uint64](ConvertTo-PeRva $pe $off 4096)})
+        $dump=Join-Path $dumpRoot 'candidates.dmp'
+        $results=@(); $rejected=@(); $reasonSeeds=@()
+        if($traceManifests) {
+        Write-NativeDump $dump ([long[]]$offsets) ([uint64[]]$addresses)
+        $nativeState.engine=[Mv2NativeDisassembler]::new($dump)
+        try {
+            for($c=0;$c -lt $offsets.Count;$c++) {
+                $nativeState.offset=[long]$offsets[$c]; $nativeState.lo=[uint64]$addresses[$c]; $nativeState.hi=$nativeState.lo+4096; $nativeState.cache=@{}
+                try {
+                    if((Read-Instruction $nativeState.lo).Op -eq 'mov') {
+                        if($traceReasons) {$reasonSeeds+=@{Offset=$nativeState.offset;Address=$nativeState.lo}}
+                    } else {
+                        $item=$null
+                        if($traceOriginal) {try {$item=Classify-Candidate $nativeState.lo} catch {}}
+                        if(!$item -and $traceAdditional) {$item=Native-Manifest $nativeState.lo}
+                        if($item -and $item.Name -in $RuleNames) {$results+=$item}
+                    }
+                }
+                catch {$rejected+=[pscustomobject]@{Offset=$nativeState.offset;Reason=$_.Exception.Message}}
+            }
+        } finally {$nativeState.engine.Dispose(); $nativeState.engine=$null}
+        } else {
+            for($c=0;$c -lt $offsets.Count;$c++) {$reasonSeeds+=@{Offset=$offsets[$c];Address=$addresses[$c]}}
+        }
+        foreach($seed in $reasonSeeds) {
+            $nativeState.offset=$seed.Offset; $nativeState.lo=$seed.Address; $nativeState.hi=$seed.Address+4096; $nativeState.cache=@{}
+            try {$results+=Native-Reason $seed.Address}
+            catch {$rejected+=[pscustomobject]@{Offset=$seed.Offset;Reason=$_.Exception.Message}}
+        }
+        # Keep diagnostics, but only caller-owned set returns now reach this list.
+        $reasonResults=@($results | Where-Object Name -eq 'ignore-mv2-disable-reason-at-runtime')
+        if($reasonResults.Count -eq 2) {
+            $evidence=@($reasonResults.ExtraEvidence)
+            if((@($evidence.Output.Role | Sort-Object) -join ',') -ne 'read-then-collapse,set-to-set' -or
+                @($evidence.ValidatorRva | Sort-Object -Unique).Count -ne 1 -or @($evidence.InsertRva | Sort-Object -Unique).Count -ne 1) {throw 'Reason pair has inconsistent roles or callees'}
+        }
+        if($VerbosePreference -ne 'SilentlyContinue') {$rejected | ForEach-Object {Write-Verbose ("Native candidate {0}: {1}" -f $_.Offset,$_.Reason)}}
+        foreach($name in $RuleNames) {
+            if(@($results | Where-Object Name -eq $name).Count -ne $(if($name -in @('allow-enable-and-report','ignore-mv2-disable-reason-at-runtime')) {2} else {1})) {throw "Non-unique native result for $name"}
+        }
+        foreach($result in $results | Where-Object {$_.Name -in @('skip-startup-disable','allow-install-policy-inline')}) {
+            $evidence=@(Test-Callee $result.CallRva $result.Name)
+            if($result.NormalCallRva) {$evidence+=Test-Callee $result.NormalCallRva 'normal-policy'}
+            $result | Add-Member NoteProperty CalleeEvidence $evidence
+        }
+        return $results
+    } finally {
+        foreach($name in @('candidates.dmp','callee.dmp','reason.dmp','validator.dmp')) {
+            $file=Join-Path $dumpRoot $name
+            if([IO.File]::Exists($file)) {[IO.File]::Delete($file)}
+        }
+        [IO.Directory]::Delete($dumpRoot)
+    }
+}
+
+function Get-Mv2StreamRuleResults {
+    param([IO.FileStream]$Stream,$Profile,$PeInfo)
+    $patterns=@(); $hits=@{}; $window=4096
+    foreach($rule in $Profile.Rules) {
+        $hits[$rule.Name]=[Collections.Generic.HashSet[long]]::new()
+        $variants=if($rule.ContainsKey('Variants')) {@($rule.Variants)} else {@($rule)}
+        foreach($variant in $variants) {
+            $pattern=ConvertTo-MaskedPattern $variant.Pattern
+            $patch=Get-VariantPatchPatterns $rule $variant
+            $at=[int]$variant.PatchOffset
+            if($at -lt 0 -or $at+$patch.Original.Length -gt $pattern.Length -or $pattern.Length -gt $window) {throw 'Invalid streamed pattern window'}
+            if($variant.ContainsKey('RequiredPattern') -and ($variant.RequiredPatternOffset -lt 0 -or
+                $variant.RequiredPatternOffset+(ConvertTo-MaskedPattern $variant.RequiredPattern).Length -gt $window)) {throw 'Required pattern exceeds streamed window'}
+            for($i=0;$i -lt $patch.Original.Length;$i++) {$pattern.Values[$at+$i]=0; $pattern.Masks[$at+$i]=0}
+            $patterns+=[pscustomobject]@{Name=$rule.Name;Values=$pattern.Values;Masks=$pattern.Masks}
+        }
+    }
+    $block=4MB; $buffer=[byte[]]::new($block+$window)
+    foreach($range in $PeInfo.ExecutableRanges) {
+        $end=$range.Start+$range.Length
+        for($begin=$range.Start;$begin -lt $end;$begin+=$block) {
+            $coreEnd=[Math]::Min($end,$begin+$block)
+            $count=[int]([Math]::Min($end,$coreEnd+$window)-$begin)
+            $Stream.Position=$begin; $read=0
+            while($read -lt $count) {$n=$Stream.Read($buffer,$read,$count-$read); if($n -le 0) {throw 'Short pattern scan read'}; $read+=$n}
+            foreach($pattern in $patterns) {
+                foreach($hit in [Mv2SmallScan]::Masked($buffer,$pattern.Values,$pattern.Masks,$count)) {
+                    if($begin+$hit -lt $coreEnd) {[void]$hits[$pattern.Name].Add($begin+$hit)}
+                }
+                if($hits[$pattern.Name].Count -gt 1024) {throw 'Pattern candidate budget exceeded'}
+            }
+        }
+    }
+    foreach($rule in $Profile.Rules) {
+        $candidates=@(); $seen=@{}
+        foreach($hit in ($hits[$rule.Name] | Sort-Object)) {
+            $range=@($PeInfo.ExecutableRanges | Where-Object {$hit -ge $_.Start -and $hit -lt $_.Start+$_.Length})
+            if($range.Count -ne 1) {throw 'Ambiguous candidate section'}
+            $count=[int][Math]::Min($window,$Stream.Length-$hit)
+            $part=Read-StreamRange $Stream $hit $count
+            $localPe=[pscustomobject]@{ExecutableRanges=@([pscustomobject]@{Start=0L;Length=[long][Math]::Min($count,$range[0].Start+$range[0].Length-$hit)})}
+            $validated=Get-RuleResult $part $rule $localPe
+            foreach($candidate in $validated.Candidates | Where-Object MatchOffset -eq 0) {
+                $candidate.MatchOffset+=$hit; $candidate.PatchOffset+=$hit
+                if(!$seen.ContainsKey($candidate.PatchOffset) -or ($rule.ContainsKey('Variants') -and $candidate.Variant -lt $seen[$candidate.PatchOffset].Variant)) {
+                    $seen[$candidate.PatchOffset]=$candidate
+                }
+            }
+        }
+        # Keep original variant precedence when different signatures share a patch site.
+        $candidates=@(if($rule.ContainsKey('Variants')) {$seen.Values | Sort-Object Variant,MatchOffset} else {$seen.Values | Sort-Object MatchOffset})
+        $result=[pscustomobject]@{Name=$rule.Name;Description=$rule.Description;MatchCount=$candidates.Count;Candidates=$candidates;Rule=$rule}
+        if(!$rule.ContainsKey('Variants')) {
+            $result | Add-Member NoteProperty OriginalPattern (ConvertTo-Pattern $rule.Original)
+            $result | Add-Member NoteProperty ReplacementPattern (ConvertTo-Pattern $rule.Replacement)
+        }
+        $result
+    }
+}
+
+function Resolve-TargetStreamAnalysis {
+    param([string]$Path,[string]$CatalogPath)
+    $catalog=Import-PowerShellDataFile -LiteralPath $CatalogPath
+    if($catalog.SchemaVersion -ne 1) {throw 'Unsupported signature catalog schema'}
+    $stream=[IO.File]::Open($Path,'Open','Read','Read')
+    try {
+        $pe=Get-PeStreamInfo $stream
+        $profiles=@($catalog.Profiles | Where-Object {[int]$_.Machine -eq $pe.Machine})
+        $profileResults=@(); $nativeEvidence=@()
+        foreach($profile in $profiles) {
+            $rules=@(Get-Mv2StreamRuleResults $stream $profile $pe)
+            $bad=@($rules | Where-Object {(Get-RuleState $_) -eq 'Invalid'})
+            $nativeNames=@('skip-startup-disable','allow-install-policy-inline','allow-enable-and-report','allow-enable-policy-inline','allow-install','ignore-mv2-disable-reason-at-runtime')
+            # Never use tracing to excuse mixed bytes, duplicate signatures, or a broken unrelated rule.
+            if($profile.Id -eq 'chromium-x64-manifest-v2-semantic' -and $rules.Count -eq 6 -and $bad.Count -gt 0 -and
+                @($bad | Where-Object {$_.Name -notin $nativeNames -or $_.MatchCount -ne 0}).Count -eq 0 -and
+                @($rules | Where-Object {$_.Name -notin $nativeNames -and (Get-RuleState $_) -ne 'Original'}).Count -eq 0 -and
+                @($rules | Where-Object {$_.Name -in $nativeNames -and $_.MatchCount -gt 0 -and (Get-RuleState $_) -ne 'Original'}).Count -eq 0) {
+                try {
+                    $native=@(Get-Mv2NativeRules $stream $pe -RuleNames @($bad.Name))
+                    foreach($group in $native | Group-Object Name) {
+                        $matching=@($rules | Where-Object Name -eq $group.Name)[0]
+                        if($group.Count -ne (Get-ExpectedMatchCount $matching.Rule)) {throw 'Native count disagreement'}
+                        if($matching.MatchCount -gt 0 -and
+                            ((@($matching.Candidates.PatchOffset | Sort-Object) -join ',') -ne (@($group.Group.PatchOffset | Sort-Object) -join ','))) {throw 'Native/signature set disagreement'}
+                    }
+                    foreach($group in $native | Group-Object Name) {
+                        $matching=@($rules | Where-Object Name -eq $group.Name)[0]
+                        if($matching.MatchCount -ne 0) {continue}
+                        $candidates=@(foreach($item in $group.Group) {
+                            $before=Read-StreamRange $stream $item.PatchOffset $item.Replacement.Count
+                            if($null -eq $before) {throw 'Truncated native patch'}
+                            [pscustomobject]@{MatchOffset=[long]$item.Offset;PatchOffset=[long]$item.PatchOffset;
+                                State='Original';Variant=-1;OriginalPattern=$before;ReplacementPattern=[byte[]]$item.Replacement}
+                        })
+                        $matching.Candidates=$candidates; $matching.MatchCount=$candidates.Count
+                        $nativeEvidence+=@($group.Group)
+                    }
+                } catch {Write-Verbose "Bounded trace rejected: $($_.Exception.Message)"}
+            }
+            $profileResults+=[pscustomobject]@{Profile=$profile;Rules=$rules;IsValid=@($rules | Where-Object {(Get-RuleState $_) -eq 'Invalid'}).Count -eq 0}
+        }
+        $valid=@($profileResults | Where-Object IsValid)
+        if($valid.Count -ne 1) {
+            $details=@($profileResults | ForEach-Object {$p=$_; foreach($r in $p.Rules) {if((Get-RuleState $r) -eq 'Invalid') {"$($p.Profile.Id)/$($r.Name): matches=$($r.MatchCount)/$(Get-ExpectedMatchCount $r.Rule)"}}})
+            throw "No unique supported signature profile matched. The target was not modified.`n$($details -join "`n")"
+        }
+        $stream.Position=0; $sha=[Security.Cryptography.SHA256]::Create()
+        try {$hash=([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','')} finally {$sha.Dispose()}
+        $analysis=Complete-TargetAnalysis $Path $pe $valid[0] $hash
+        $analysis | Add-Member NoteProperty PeInfo $pe
+        $analysis | Add-Member NoteProperty NativeEvidence $nativeEvidence
+        $analysis.Public | Add-Member NoteProperty Detector $(if($nativeEvidence.Count) {'StreamAndBoundedTrace'} else {'StreamMasked'})
+        return $analysis
+    } finally {$stream.Dispose()}
+}
+
+function New-StreamPatchPlan {
+    param([string]$Path,$Analysis)
+    $stream=[IO.File]::Open($Path,'Open','Read','Read')
+    try {
+        $stream.Position=0; $sha=[Security.Cryptography.SHA256]::Create()
+        try {$hash=([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','')} finally {$sha.Dispose()}
+        if($hash -ne $Analysis.Hash) {throw 'Target changed between analysis and planning'}
+        $patches=@(); $occupied=@{}
+        foreach($rule in $Analysis.Selected.Rules) {
+            foreach($candidate in $rule.Candidates) {
+                $replacement=@(if($candidate.PSObject.Properties.Name -contains 'ReplacementPattern') {$candidate.ReplacementPattern} else {$rule.ReplacementPattern})
+                $before=Read-StreamRange $stream $candidate.PatchOffset $replacement.Count
+                if($null -eq $before) {throw 'Truncated patch bytes'}
+                $after=[byte[]]$before.Clone()
+                for($i=0;$i -lt $replacement.Count;$i++) {
+                    $at=[long]$candidate.PatchOffset+$i
+                    if($occupied.ContainsKey($at)) {throw 'Overlapping patch plan'}; $occupied[$at]=$true
+                    if($replacement[$i] -ge 0) {$after[$i]=[byte]$replacement[$i]}
+                }
+                if(($before -join ',') -ne ($after -join ',')) {
+                    $patches+=[pscustomobject]@{Name=$rule.Name;Offset=[long]$candidate.PatchOffset;Before=(Get-HexBytes $before);After=(Get-HexBytes $after)}
+                }
+            }
+        }
+        return [pscustomobject]@{Patches=$patches}
+    } finally {$stream.Dispose()}
+}
+
+function Get-Mv2NativeReceiptAnalysis {
+    param([string]$Path,[string]$BackupBase,[string]$CatalogPath,[ref]$VerifiedRecord)
+    try {
+        $version=[Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+        $candidate=Get-LatestTargetReceipt $BackupBase $Path $version.FileVersion
+        $record=if($candidate) {$candidate.Record} else {$null}
+        if((-not $record -or $record.PSObject.Properties.Name -notcontains 'NativeTrace' -or $record.NativeTrace -ne $true) -and (Test-Path -LiteralPath ($Path+'.mv2-receipt.json'))) {
+            $record=Get-Content -LiteralPath ($Path+'.mv2-receipt.json') -Raw | ConvertFrom-Json
+        }
+        if(-not $record -or $record.PSObject.Properties.Name -notcontains 'NativeTrace' -or $record.NativeTrace -ne $true) {return $null}
+        if($record.SchemaVersion -ne 1 -or $record.State -ne 'Applied' -or $record.FileVersion -ne $version.FileVersion -or
+            [IO.Path]::GetFullPath($record.TargetPath) -ne [IO.Path]::GetFullPath($Path) -or
+            -not (Test-Path -LiteralPath $record.BackupPath -PathType Leaf)) {return $null}
+        if((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $record.PatchedSHA256) {return $null}
+        # Recompute the original's bounded evidence and patch plan; a receipt alone is not authority.
+        $analysis=Resolve-TargetStreamAnalysis $record.BackupPath $CatalogPath
+        if(-not $analysis.AllOriginal -or $analysis.Hash -ne $record.OriginalSHA256 -or $analysis.Selected.Profile.Id -ne $record.Profile) {return $null}
+        $plan=New-StreamPatchPlan $record.BackupPath $analysis
+        if($plan.Patches.Count -ne @($record.Patches).Count) {return $null}
+        foreach($patch in $plan.Patches) {
+            $matches=@($record.Patches | Where-Object {$_.Name -eq $patch.Name -and $_.Offset -eq $patch.Offset -and $_.Before -eq $patch.Before -and $_.After -eq $patch.After})
+            if($matches.Count -ne 1) {return $null}
+        }
+        # Hash the complete original with only the recomputed patches projected into each block.
+        $source=[IO.File]::Open($record.BackupPath,'Open','Read','Read')
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try {
+            $buffer=[byte[]]::new(4MB); $offset=0L
+            while(($n=$source.Read($buffer,0,$buffer.Length)) -gt 0) {
+                foreach($patch in $plan.Patches) {
+                    $after=ConvertTo-ConcreteBytes $patch.After
+                    $first=[Math]::Max($offset,[long]$patch.Offset)
+                    $last=[Math]::Min($offset+$n,[long]$patch.Offset+$after.Length)
+                    if($last -gt $first) {[Array]::Copy($after,$first-$patch.Offset,$buffer,$first-$offset,$last-$first)}
+                }
+                [void]$sha.TransformBlock($buffer,0,$n,$buffer,0); $offset+=$n
+            }
+            [void]$sha.TransformFinalBlock([byte[]]@(),0,0)
+            $projected=([BitConverter]::ToString($sha.Hash)).Replace('-','')
+        } finally {$sha.Dispose(); $source.Dispose()}
+        if($projected -ne $record.PatchedSHA256 -or (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $projected) {return $null}
+        $result=$analysis.Public
+        $result.Target=[IO.Path]::GetFullPath($Path); $result.SHA256=$projected; $result.State='AlreadyPatched'
+        foreach($rule in $result.Rules) {$rule.State='Patched'}
+        $result | Add-Member NoteProperty Verification 'NativeReceiptVerified'
+        if($null -ne $VerifiedRecord) {$VerifiedRecord.Value=$record}
+        return $result
+    } catch {Write-Verbose "Native receipt was not usable: $($_.Exception.Message)"; return $null}
+}
+
 function Invoke-PatchTarget {
     param(
         [string]$Path,
@@ -2046,15 +3362,24 @@ function Invoke-PatchTarget {
 
     $resolved = (Resolve-Path -LiteralPath $Path).Path
     $resolvedCatalog = (Resolve-Path -LiteralPath $CatalogPath).Path
-    $fastAnalysis = Get-ReceiptPatchedAnalysis $resolved $BackupBase $resolvedCatalog
+    $nativeReceipt = $null
+    $fastAnalysis = Get-Mv2NativeReceiptAnalysis $resolved $BackupBase $resolvedCatalog -VerifiedRecord ([ref]$nativeReceipt)
+    if (-not $fastAnalysis) { $fastAnalysis = Get-ReceiptPatchedAnalysis $resolved $BackupBase $resolvedCatalog }
     if ($fastAnalysis) {
         if ($OutputPath) {
             Copy-Item -LiteralPath $resolved -Destination $OutputPath
+            if ($nativeReceipt) {
+                $outputFull = if (Test-Path -LiteralPath $OutputPath -PathType Container) {
+                    Join-Path ([IO.Path]::GetFullPath($OutputPath)) ([IO.Path]::GetFileName($resolved))
+                } else { [IO.Path]::GetFullPath($OutputPath) }
+                if ((Get-FileHash -LiteralPath $outputFull -Algorithm SHA256).Hash -ne $nativeReceipt.PatchedSHA256) { throw 'Copied output hash verification failed.' }
+                $nativeReceipt.TargetPath = $outputFull
+                $nativeReceipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath ($outputFull+'.mv2-receipt.json') -Encoding UTF8
+            }
         }
         return $fastAnalysis
     }
-    $bytes = [IO.File]::ReadAllBytes($resolved)
-    $analysis = Resolve-TargetAnalysis $resolved $bytes $resolvedCatalog
+    $analysis = Resolve-TargetStreamAnalysis $resolved $resolvedCatalog
     if (-not $InPlace -and [string]::IsNullOrWhiteSpace($OutputPath)) {
         return $analysis.Public
     }
@@ -2065,6 +3390,9 @@ function Invoke-PatchTarget {
         return $analysis.Public
     }
 
+    # Disk writes keep the existing verified backup/rollback transaction.
+    $bytes = [IO.File]::ReadAllBytes($resolved)
+    if ((Get-ByteArraySha256 $bytes) -ne $analysis.Hash) { throw 'Target changed after streamed analysis; retry.' }
     $patchData = New-PatchedBytes $bytes $analysis.Selected
     $patchedHash = Get-ByteArraySha256 $patchData.Bytes
     if ($OutputPath) {
@@ -2072,6 +3400,13 @@ function Invoke-PatchTarget {
         [IO.File]::WriteAllBytes($outputFull, $patchData.Bytes)
         if ((Get-FileHash -LiteralPath $outputFull -Algorithm SHA256).Hash -ne $patchedHash) {
             throw 'Output hash verification failed.'
+        }
+        if ($analysis.NativeEvidence.Count -gt 0) {
+            [pscustomobject]@{
+                SchemaVersion=1;State='Applied';NativeTrace=$true;TargetPath=$outputFull;BackupPath=$resolved;
+                FileVersion=$analysis.Version.FileVersion;Profile=$analysis.Selected.Profile.Id;
+                OriginalSHA256=$analysis.Hash;PatchedSHA256=$patchedHash;Patches=$patchData.Patches
+            } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath ($outputFull+'.mv2-receipt.json') -Encoding UTF8
         }
         return [pscustomobject]@{
             Target = $resolved
@@ -2142,6 +3477,7 @@ function Invoke-PatchTarget {
                 $extensionBackup.ExtensionCount
             } else { 0 }
             Patches = $patchData.Patches
+            NativeTrace = ($analysis.NativeEvidence.Count -gt 0)
         }
         $receipt | ConvertTo-Json -Depth 6 |
             Set-Content -LiteralPath $receiptPath -Encoding UTF8
@@ -2157,9 +3493,18 @@ function Invoke-PatchTarget {
             if ((Get-ByteArraySha256 $writtenBytes) -ne $patchedHash) {
                 throw 'Post-write verification failed.'
             }
-            $writtenAnalysis = Resolve-TargetAnalysis $resolved $writtenBytes $CatalogPath
-            if (-not $writtenAnalysis.AllPatched) {
-                throw 'Post-write rule verification failed.'
+            if ($analysis.NativeEvidence.Count -gt 0) {
+                # Reconstruct the verified original in the readback buffer; disk bytes are untouched.
+                foreach ($patch in $patchData.Patches) {
+                    $after = ConvertTo-ConcreteBytes $patch.After
+                    if (-not (Test-BytesAt $writtenBytes $patch.Offset ([int[]]$after))) { throw 'Native readback differs from verified plan.' }
+                    $before = ConvertTo-ConcreteBytes $patch.Before
+                    [Array]::Copy($before, 0, $writtenBytes, $patch.Offset, $before.Length)
+                }
+                if ((Get-ByteArraySha256 $writtenBytes) -ne $analysis.Hash) { throw 'Native readback has changes outside the verified plan.' }
+            } else {
+                $writtenAnalysis = Resolve-TargetAnalysis $resolved $writtenBytes $CatalogPath
+                if (-not $writtenAnalysis.AllPatched) { throw 'Post-write rule verification failed.' }
             }
             $receipt.State = 'Applied'
             $receipt | ConvertTo-Json -Depth 6 |
@@ -2629,10 +3974,10 @@ function Resolve-RamBrowserExecutable {
         $resolved = $matches[0].FullName
     }
 
-    $bytes = [IO.File]::ReadAllBytes($resolved)
-    if ((Get-PeInfo $bytes).Machine -ne 0x8664) {
-        throw "RAM launch requires an x64 browser executable: $resolved"
-    }
+    $exeStream = [IO.File]::OpenRead($resolved)
+    try {
+        if ((Get-PeStreamInfo $exeStream).Machine -ne 0x8664) { throw "RAM launch requires an x64 browser executable: $resolved" }
+    } finally { $exeStream.Dispose() }
     return $resolved
 }
 
@@ -2667,15 +4012,14 @@ function Invoke-RamLaunch {
     )
 
     $resolved = (Resolve-Path -LiteralPath $Path).Path
-    $bytes = [IO.File]::ReadAllBytes($resolved)
-    $analysis = Resolve-TargetAnalysis $resolved $bytes $CatalogPath
+    $analysis = Resolve-TargetStreamAnalysis $resolved $CatalogPath
     if (-not $analysis.AllOriginal) {
         if ($analysis.AllPatched) {
             throw 'RAM launch requires an original, unpatched target DLL. Restore or update the browser before trying it.'
         }
         throw 'RAM launch requires every verified rule to be in its original state.'
     }
-    $peInfo = Get-PeInfo $bytes
+    $peInfo = $analysis.PeInfo
     if ($peInfo.Machine -ne 0x8664) {
         throw 'RAM launch currently supports x64 Chromium browsers only.'
     }
@@ -2686,7 +4030,7 @@ function Invoke-RamLaunch {
     Assert-BrowserStopped $browserPath
     $parsedChromeArguments = [RamPatchLauncher]::ParseArguments($ChromeArguments)
 
-    $patchData = New-PatchedBytes $bytes $analysis.Selected
+    $patchData = New-StreamPatchPlan $resolved $analysis
     if ($patchData.Patches.Count -eq 0) {
         throw 'The verified RAM patch plan contains no byte changes.'
     }
@@ -3137,7 +4481,7 @@ function Show-PatcherGui {
     $form.Controls.Add($backupProfileBox)
 
     $chromeArgumentsLabel = New-Object Windows.Forms.Label
-    $chromeArgumentsLabel.Text = 'ブラウザ起動引数（Windows形式、空白区切り）'
+    $chromeArgumentsLabel.Text = 'ブラウザ起動引数（RAM起動用）'
     $chromeArgumentsLabel.AutoSize = $true
     $chromeArgumentsLabel.Location = New-Object Drawing.Point(20, 207)
     $form.Controls.Add($chromeArgumentsLabel)

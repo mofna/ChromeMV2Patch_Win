@@ -1,7 +1,10 @@
 # Chromium MV2 signature patcher
 
-Windows x64版ChromiumブラウザのDLLを命令シグネチャで解析し、Manifest V2の制限箇所にパッチを適用します。
-GUIとCLIから、RAM起動、DLLへの適用、Google Chrome更新後の自動適用、バックアップと復元を操作できます。
+Windows x64版ChromiumブラウザのManifest V2制限にパッチを適用するツールです。
+DLLを書き換える方法と、ディスク上のDLLを変更しないRAM起動を選べます。
+GUIとCLIに対応しています。
+
+パッチが変更する処理の詳細は、[対応箇所と変更内容](README.chromium-mv2-patch-concept.md)を参照してください。
 
 ## 実行環境と起動
 
@@ -16,8 +19,9 @@ Windows PowerShell 5.1またはPowerShell 7で、次の2ファイルを同じフ
 .\chromium_mv2_patch.ps1
 ```
 
-GUIでは対象DLLの自動検出と選択、状態解析、RAM起動、パッチ適用、バックアップ選択、DLL復元、拡張機能復元、保護設定ページの表示、自動適用の登録と解除を実行できます。
-パッチ適用、DLL復元、自動適用の登録と解除では、UACによる管理者昇格を要求します。
+GUIで対象DLLを選び、実行する操作を選択します。
+DLLへの適用と復元、自動適用の登録と解除には管理者権限が必要です。
+GUIでは必要に応じてUACの確認画面が開きます。
 
 CLIでは引数で操作を選びます。
 各引数の説明は次のコマンドで確認できます。
@@ -59,8 +63,7 @@ Chrome以外のChromium系ブラウザでは、対象DLLと実行ファイルを
   -BrowserArguments '--user-data-dir="C:\Browser MV2 Profile"'
 ```
 
-実行ファイルの自動検出は、DLLのバージョンフォルダの一つ上にあるEXEから、製品名とファイルバージョンが一致する候補を選びます。
-候補を一つに絞れない場合は、`-BrowserExecutable`で指定してください。
+実行ファイルを自動検出できない場合は、`-BrowserExecutable`で指定してください。
 
 バックアップ元はGoogle Chrome各チャネル、Brave、Edge、Vivaldiの標準配置から自動判定します。
 別の配置やブラウザを使う場合は、`--user-data-dir`を指定してください。
@@ -84,6 +87,9 @@ RAM方式だけで試す場合は、登録済みの自動適用タスクを`-Rem
   -Output '.\chrome.mv2-patched.dll'
 ```
 
+出力先の隣に`.mv2-receipt.json`が作成された場合は、元の入力DLLと一緒に残してください。
+適用済みかどうかを判定する際に使います。
+
 インストール済みDLLへ直接適用するには、対象ブラウザを完全に終了して`-Apply`を実行します。
 書き換え前に元DLLをバックアップします。
 Program Files配下へ適用する場合は、管理者PowerShellで実行してください。
@@ -92,7 +98,7 @@ Program Files配下へ適用する場合は、管理者PowerShellで実行して
 .\chromium_mv2_patch.ps1 -Target 'C:\path\to\chrome.dll' -Apply
 ```
 
-Google Chromeでは、`-Target`を省略するとApplicationフォルダを自動検出し、ファイルバージョンとフォルダ名が一致する最新の`chrome.dll`を選びます。
+Google Chromeでは、`-Target`を省略するとインストール済みの最新DLLを自動検出します。
 
 ```powershell
 .\chromium_mv2_patch.ps1 -Apply
@@ -114,14 +120,9 @@ Applicationフォルダを指定する場合は、`-BrowserRoot`を使います�
 .\chromium_mv2_patch.ps1 -AutoPatch
 ```
 
-SYSTEM権限で次の2タスクが動作します。
-
-- `\ChromiumMV2Patcher\ChromiumMV2UpdateWatcher`：Windows起動時に開始し、Google Updaterの更新履歴とChrome DLLのファイル通知を監視します。
-- `\ChromiumMV2Patcher\ChromiumMV2AutoPatch`：1時間ごとに最新版を確認し、適用を補完します。
-
-自動適用は、最新版DLLの配置完了と排他書き込みの可否を確認してから実行します。
-通知が配置完了前に届いた場合は、最大2分間再試行します。
-適用済みDLLは検証して`AlreadyPatched`と判定します。
+自動適用はSYSTEM権限で動作します。
+Windows起動時からChromeの更新を監視し、1時間ごとの定期確認も行います。
+適用済みのDLLは再適用しません。
 
 Applicationフォルダを指定して登録することもできます。
 
@@ -131,7 +132,7 @@ Applicationフォルダを指定して登録することもできます。
 ```
 
 自動適用を解除するには、次を実行します。
-両タスクと実行中の監視プロセスを停止し、タスク登録を削除します。
+監視プロセスを停止し、監視と定期確認のタスク登録を削除します。
 
 ```powershell
 .\chromium_mv2_patch.ps1 -RemoveAutoPatch
@@ -151,6 +152,8 @@ Applicationフォルダを指定して登録することもできます。
 ```
 
 DLLへの直接適用では、元DLLと適用情報を記録した`receipt.json`を保存します。
+復元や適用済み判定に使うため、バックアップ内のファイルはまとめて保管してください。
+
 手動でGoogle Chromeへ適用する場合は、`%LOCALAPPDATA%\Google\Chrome\User Data`からプロファイル別に次のデータも保存します。
 
 - 拡張機能本体
@@ -161,7 +164,8 @@ DLLへの直接適用では、元DLLと適用情報を記録した`receipt.json`
 
 自動適用のバックアップ対象は、元DLLと`receipt.json`です。
 
-RAM起動時の`-BackupProfile`では、拡張機能本体と設定ストレージ、`inventory.json`に加え、`Local State`と各プロファイルの`Preferences`、`Secure Preferences`を保存します。
+RAM起動時の`-BackupProfile`では、拡張機能本体と設定ストレージ、`inventory.json`を保存します。
+ブラウザ全体の`Local State`と、各プロファイルの`Preferences`、`Secure Preferences`も含まれます。
 保存先はバックアップフォルダ内の`RamLaunch_<version>_<time>`で、内容を`profile-backup.json`に記録します。
 
 ### DLLの復元
@@ -181,7 +185,7 @@ RAM起動時の`-BackupProfile`では、拡張機能本体と設定ストレー�
   -Receipt '.\chromium_mv2_backups\...\receipt.json'
 ```
 
-復元時には、バックアップのハッシュと、現在の対象DLLのパッチ済みハッシュが、それぞれレシートの記録と一致することを確認します。
+バックアップが破損していたり、適用後に対象DLLが更新されたりしている場合は、復元せずに停止します。
 
 ### 拡張機能の復元
 
@@ -207,25 +211,19 @@ RAM起動時の`-BackupProfile`では、拡張機能本体と設定ストレー�
 バックアップ時にいずれかの許可が有効だった拡張機能の詳細ページを開き、保存された設定値を表示します。
 表示内容に従ってChromeの画面で設定してください。
 
-## 対応シグネチャと検証
+## パッチ動作確認済みバージョン
 
-パッチ規則は`chromium_mv2_signatures.psd1`に定義されています。
-命令種別、即値、条件分岐、前後関係を照合し、レジスタ割り当てやスタック変位などを正規化して対象を識別します。
-全ルールが実行可能PEセクション内で規定数だけ一致し、各ルールの複製間で状態がそろっていることが適用条件です。
-
-DLLへの書き込み後は、SHA-256と全パッチ箇所の再解析で結果を検証します。
-検証や適用記録の確定に失敗した場合は、元バイト列へ戻してハッシュを再確認します。
-RAM起動でも、対象DLLの読み込みとメモリ上の元バイト列を確認してから置換します。
-
-2026年9月2日時点で、次のGoogle Chromeビルドについてシグネチャ一致とパッチ結果を確認しています。
+次のGoogle Chrome Windows x64版でパッチ動作確認済みです。確認日：2026年9月15日。
 
 | チャネル | バージョン |
 | --- | --- |
 | Stable | 151.0.7922.174 |
 | Stable | 152.0.7977.76 |
+| Stable | 153.0.8010.37 |
 | Beta / Chrome for Testing | 153.0.8010.12 |
 | Dev / Chrome for Testing | 154.0.8025.0 |
 | Canary / Chrome for Testing | 154.0.8037.0 |
+| Dev / Chrome for Testing | 155.0.8048.0 |
+| Canary / Chrome for Testing | 155.0.8058.0 |
 
-5ビルドすべてで、8か所への適用、パッチ後の再解析、分岐変位の保持、コピー出力時の元DLLの保持を確認しました。
-Stableでは、レシートを使う適用済み判定と、不整合のあるDLLの拒否も確認しています。
+新しいビルドでパッチ箇所を検出できない場合や、検出数が想定と異なる場合は、パッチを適用せずに停止します。
