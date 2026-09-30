@@ -1,0 +1,1754 @@
+[
+  {
+    "ordinal": 1,
+    "rva": 333364816,
+    "kind": "data",
+    "name": "?$TSS0@?1??stateLock@DebugEventSource@Events@Applications@Microsoft@@KAAEAVrecursive_mutex@__Cr@std@@XZ@4HA"
+  },
+  {
+    "ordinal": 2,
+    "rva": 202278816,
+    "kind": "function",
+    "name": "??0DebugEventDispatcher@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 3,
+    "rva": 202278816,
+    "kind": "function",
+    "name": "??0DebugEventDispatcher@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 4,
+    "rva": 202278800,
+    "kind": "function",
+    "name": "??0DebugEventListener@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 5,
+    "rva": 202278800,
+    "kind": "function",
+    "name": "??0DebugEventListener@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 6,
+    "rva": 202279216,
+    "kind": "function",
+    "name": "??0DebugEventSource@Events@Applications@Microsoft@@QEAA@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 7,
+    "rva": 202278832,
+    "kind": "function",
+    "name": "??0DebugEventSource@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 8,
+    "rva": 202278976,
+    "kind": "function",
+    "name": "??0DebugEventSource@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 9,
+    "rva": 202282464,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 10,
+    "rva": 202281952,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 11,
+    "rva": 202280544,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 12,
+    "rva": 202280400,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEBV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@23@@56@@Z"
+  },
+  {
+    "ordinal": 13,
+    "rva": 202281408,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@E@Z"
+  },
+  {
+    "ordinal": 14,
+    "rva": 202282752,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$initializer_list@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@6@@Z"
+  },
+  {
+    "ordinal": 15,
+    "rva": 202281248,
+    "kind": "function",
+    "name": "??0EventProperties@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 16,
+    "rva": 202264768,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 17,
+    "rva": 202268416,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEAV?$vector@NV?$allocator@N@__Cr@std@@@__Cr@std@@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 18,
+    "rva": 202268576,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEAV?$vector@UGUID_t@Events@Applications@Microsoft@@V?$allocator@UGUID_t@Events@Applications@Microsoft@@@__Cr@std@@@__Cr@std@@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 19,
+    "rva": 202268752,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEAV?$vector@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@@__Cr@std@@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 20,
+    "rva": 202268256,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEAV?$vector@_JV?$allocator@_J@__Cr@std@@@__Cr@std@@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 21,
+    "rva": 202264768,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 22,
+    "rva": 202267568,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 23,
+    "rva": 202267984,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@CW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 24,
+    "rva": 202268080,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@EW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 25,
+    "rva": 202268032,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@FW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 26,
+    "rva": 202268128,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@GW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 27,
+    "rva": 202267936,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@HW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 28,
+    "rva": 202268176,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@IW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 29,
+    "rva": 202267936,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@JW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 30,
+    "rva": 202267744,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@NW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 31,
+    "rva": 202267440,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@PEBDW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 32,
+    "rva": 202267872,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@UGUID_t@123@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 33,
+    "rva": 202267792,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@Utime_ticks_t@123@W4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 34,
+    "rva": 202267360,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 35,
+    "rva": 202267696,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@_JW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 36,
+    "rva": 202267696,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@_KW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 37,
+    "rva": 202267840,
+    "kind": "function",
+    "name": "??0EventProperty@Events@Applications@Microsoft@@QEAA@_NW4PiiKind@123@W4DataCategory@123@@Z"
+  },
+  {
+    "ordinal": 38,
+    "rva": 202263808,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 39,
+    "rva": 202263808,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 40,
+    "rva": 202263744,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@HHHAEBV?$initializer_list@E@std@@@Z"
+  },
+  {
+    "ordinal": 41,
+    "rva": 202262880,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@PEBD@Z"
+  },
+  {
+    "ordinal": 42,
+    "rva": 202263440,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@QEBE_N@Z"
+  },
+  {
+    "ordinal": 43,
+    "rva": 202263808,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@U_GUID@@@Z"
+  },
+  {
+    "ordinal": 44,
+    "rva": 88850688,
+    "kind": "function",
+    "name": "??0GUID_t@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 45,
+    "rva": 202279488,
+    "kind": "function",
+    "name": "??0IAuthTokensController@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 46,
+    "rva": 202279488,
+    "kind": "function",
+    "name": "??0IAuthTokensController@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 47,
+    "rva": 104481152,
+    "kind": "function",
+    "name": "??0IDataFieldVisitor@telemetry_client@@QEAA@AEBV01@@Z"
+  },
+  {
+    "ordinal": 48,
+    "rva": 104481152,
+    "kind": "function",
+    "name": "??0IDataFieldVisitor@telemetry_client@@QEAA@XZ"
+  },
+  {
+    "ordinal": 49,
+    "rva": 171252240,
+    "kind": "function",
+    "name": "??0ILogConfiguration@Events@Applications@Microsoft@@QEAA@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 50,
+    "rva": 202278592,
+    "kind": "function",
+    "name": "??0ILogConfiguration@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 51,
+    "rva": 21445536,
+    "kind": "function",
+    "name": "??0ILogConfiguration@Events@Applications@Microsoft@@QEAA@AEBV?$initializer_list@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@VVariant@Events@Applications@Microsoft@@@__Cr@std@@@std@@@Z"
+  },
+  {
+    "ordinal": 52,
+    "rva": 107010272,
+    "kind": "function",
+    "name": "??0ILogConfiguration@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 53,
+    "rva": 202280240,
+    "kind": "function",
+    "name": "??0ILogController@Events@Applications@Microsoft@@QEAA@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 54,
+    "rva": 202280240,
+    "kind": "function",
+    "name": "??0ILogController@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 55,
+    "rva": 202280240,
+    "kind": "function",
+    "name": "??0ILogController@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 56,
+    "rva": 202280256,
+    "kind": "function",
+    "name": "??0ILogManager@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 57,
+    "rva": 202280256,
+    "kind": "function",
+    "name": "??0ILogManager@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 58,
+    "rva": 202278560,
+    "kind": "function",
+    "name": "??0ILogger@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 59,
+    "rva": 202278560,
+    "kind": "function",
+    "name": "??0ILogger@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 60,
+    "rva": 202278576,
+    "kind": "function",
+    "name": "??0IModule@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 61,
+    "rva": 202278576,
+    "kind": "function",
+    "name": "??0IModule@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 62,
+    "rva": 202278544,
+    "kind": "function",
+    "name": "??0ISemanticContext@Events@Applications@Microsoft@@QEAA@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 63,
+    "rva": 202278544,
+    "kind": "function",
+    "name": "??0ISemanticContext@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 64,
+    "rva": 202279824,
+    "kind": "function",
+    "name": "??0LogConfiguration@Telemetry@Applications@Microsoft@@QEAA@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 65,
+    "rva": 202279504,
+    "kind": "function",
+    "name": "??0LogConfiguration@Telemetry@Applications@Microsoft@@QEAA@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 66,
+    "rva": 109260960,
+    "kind": "function",
+    "name": "??0LogConfiguration@Telemetry@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 67,
+    "rva": 93008320,
+    "kind": "function",
+    "name": "??0time_ticks_t@Events@Applications@Microsoft@@QEAA@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 68,
+    "rva": 93008320,
+    "kind": "function",
+    "name": "??0time_ticks_t@Events@Applications@Microsoft@@QEAA@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 69,
+    "rva": 202262848,
+    "kind": "function",
+    "name": "??0time_ticks_t@Events@Applications@Microsoft@@QEAA@PEB_J@Z"
+  },
+  {
+    "ordinal": 70,
+    "rva": 90851408,
+    "kind": "function",
+    "name": "??0time_ticks_t@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 71,
+    "rva": 88535488,
+    "kind": "function",
+    "name": "??0time_ticks_t@Events@Applications@Microsoft@@QEAA@_K@Z"
+  },
+  {
+    "ordinal": 72,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1DebugEventDispatcher@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 73,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1DebugEventListener@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 74,
+    "rva": 145541344,
+    "kind": "function",
+    "name": "??1DebugEventSource@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 75,
+    "rva": 202281056,
+    "kind": "function",
+    "name": "??1EventProperties@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 76,
+    "rva": 202267344,
+    "kind": "function",
+    "name": "??1EventProperty@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 77,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1IAuthTokensController@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 78,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1IDataFieldVisitor@telemetry_client@@UEAA@XZ"
+  },
+  {
+    "ordinal": 79,
+    "rva": 145550784,
+    "kind": "function",
+    "name": "??1ILogConfiguration@Events@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 80,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1ILogManager@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 81,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1ILogger@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 82,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1IModule@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 83,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "??1ISemanticContext@Events@Applications@Microsoft@@UEAA@XZ"
+  },
+  {
+    "ordinal": 84,
+    "rva": 202280128,
+    "kind": "function",
+    "name": "??1LogConfiguration@Telemetry@Applications@Microsoft@@QEAA@XZ"
+  },
+  {
+    "ordinal": 85,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4DebugEventDispatcher@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 86,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4DebugEventListener@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 87,
+    "rva": 202279424,
+    "kind": "function",
+    "name": "??4DebugEventSource@Events@Applications@Microsoft@@QEAAAEAV0123@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 88,
+    "rva": 202279360,
+    "kind": "function",
+    "name": "??4DebugEventSource@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 89,
+    "rva": 202282496,
+    "kind": "function",
+    "name": "??4EventProperties@Events@Applications@Microsoft@@QEAAAEAV0123@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 90,
+    "rva": 202282240,
+    "kind": "function",
+    "name": "??4EventProperties@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 91,
+    "rva": 202281120,
+    "kind": "function",
+    "name": "??4EventProperties@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 92,
+    "rva": 202282896,
+    "kind": "function",
+    "name": "??4EventProperties@Events@Applications@Microsoft@@QEAAAEAV0123@V?$initializer_list@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@std@@@Z"
+  },
+  {
+    "ordinal": 93,
+    "rva": 202265616,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 94,
+    "rva": 202265920,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 95,
+    "rva": 202266864,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBV?$vector@NV?$allocator@N@__Cr@std@@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 96,
+    "rva": 202267024,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBV?$vector@UGUID_t@Events@Applications@Microsoft@@V?$allocator@UGUID_t@Events@Applications@Microsoft@@@__Cr@std@@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 97,
+    "rva": 202267184,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBV?$vector@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 98,
+    "rva": 202266704,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@AEBV?$vector@_JV?$allocator@_J@__Cr@std@@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 99,
+    "rva": 202266256,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@C@Z"
+  },
+  {
+    "ordinal": 100,
+    "rva": 202266352,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@E@Z"
+  },
+  {
+    "ordinal": 101,
+    "rva": 202266304,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@F@Z"
+  },
+  {
+    "ordinal": 102,
+    "rva": 202266400,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@G@Z"
+  },
+  {
+    "ordinal": 103,
+    "rva": 202266208,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@H@Z"
+  },
+  {
+    "ordinal": 104,
+    "rva": 202266448,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@I@Z"
+  },
+  {
+    "ordinal": 105,
+    "rva": 202266208,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@J@Z"
+  },
+  {
+    "ordinal": 106,
+    "rva": 202266496,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@N@Z"
+  },
+  {
+    "ordinal": 107,
+    "rva": 202266032,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@PEBD@Z"
+  },
+  {
+    "ordinal": 108,
+    "rva": 202266640,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@UGUID_t@123@@Z"
+  },
+  {
+    "ordinal": 109,
+    "rva": 202266592,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@Utime_ticks_t@123@@Z"
+  },
+  {
+    "ordinal": 110,
+    "rva": 202266160,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@_J@Z"
+  },
+  {
+    "ordinal": 111,
+    "rva": 202266160,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@_K@Z"
+  },
+  {
+    "ordinal": 112,
+    "rva": 202266544,
+    "kind": "function",
+    "name": "??4EventProperty@Events@Applications@Microsoft@@QEAAAEAU0123@_N@Z"
+  },
+  {
+    "ordinal": 113,
+    "rva": 202263808,
+    "kind": "function",
+    "name": "??4GUID_t@Events@Applications@Microsoft@@QEAAAEAU0123@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 114,
+    "rva": 202263808,
+    "kind": "function",
+    "name": "??4GUID_t@Events@Applications@Microsoft@@QEAAAEAU0123@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 115,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4IAuthTokensController@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 116,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4IDataFieldVisitor@telemetry_client@@QEAAAEAV01@AEBV01@@Z"
+  },
+  {
+    "ordinal": 117,
+    "rva": 202278752,
+    "kind": "function",
+    "name": "??4ILogConfiguration@Events@Applications@Microsoft@@QEAAAEAV0123@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 118,
+    "rva": 202278704,
+    "kind": "function",
+    "name": "??4ILogConfiguration@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 119,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4ILogController@Events@Applications@Microsoft@@QEAAAEAV0123@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 120,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4ILogController@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 121,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4ILogManager@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 122,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4ILogger@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 123,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4IModule@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 124,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4ISemanticContext@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 125,
+    "rva": 202280032,
+    "kind": "function",
+    "name": "??4LogConfiguration@Telemetry@Applications@Microsoft@@QEAAAEAU0123@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 126,
+    "rva": 202279936,
+    "kind": "function",
+    "name": "??4LogConfiguration@Telemetry@Applications@Microsoft@@QEAAAEAU0123@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 127,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4LogManagerProvider@Events@Applications@Microsoft@@QEAAAEAV0123@$$QEAV0123@@Z"
+  },
+  {
+    "ordinal": 128,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??4LogManagerProvider@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV0123@@Z"
+  },
+  {
+    "ordinal": 129,
+    "rva": 93008320,
+    "kind": "function",
+    "name": "??4time_ticks_t@Events@Applications@Microsoft@@QEAAAEAU0123@$$QEAU0123@@Z"
+  },
+  {
+    "ordinal": 130,
+    "rva": 93008320,
+    "kind": "function",
+    "name": "??4time_ticks_t@Events@Applications@Microsoft@@QEAAAEAU0123@AEBU0123@@Z"
+  },
+  {
+    "ordinal": 131,
+    "rva": 202264848,
+    "kind": "function",
+    "name": "??8EventProperty@Events@Applications@Microsoft@@QEBA_NAEBU0123@@Z"
+  },
+  {
+    "ordinal": 132,
+    "rva": 202264064,
+    "kind": "function",
+    "name": "??8GUID_t@Events@Applications@Microsoft@@QEBA_NAEBU0123@@Z"
+  },
+  {
+    "ordinal": 133,
+    "rva": 202311232,
+    "kind": "function",
+    "name": "??AILogConfiguration@Events@Applications@Microsoft@@QEAAAEAVVariant@123@PEBD@Z"
+  },
+  {
+    "ordinal": 134,
+    "rva": 88305888,
+    "kind": "function",
+    "name": "??DILogConfiguration@Events@Applications@Microsoft@@QEAAAEAV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@VVariant@Events@Applications@Microsoft@@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@VVariant@Events@Applications@Microsoft@@@__Cr@std@@@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 135,
+    "rva": 202264112,
+    "kind": "function",
+    "name": "??MGUID_t@Events@Applications@Microsoft@@QEBA_NAEBU0123@@Z"
+  },
+  {
+    "ordinal": 136,
+    "rva": 202280560,
+    "kind": "function",
+    "name": "??YEventProperties@Events@Applications@Microsoft@@QEAAAEAV0123@AEBV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 137,
+    "rva": 284946632,
+    "kind": "data",
+    "name": "??_7DebugEventDispatcher@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 138,
+    "rva": 284946600,
+    "kind": "data",
+    "name": "??_7DebugEventListener@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 139,
+    "rva": 283143952,
+    "kind": "data",
+    "name": "??_7DebugEventSource@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 140,
+    "rva": 284947344,
+    "kind": "data",
+    "name": "??_7EventProperties@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 141,
+    "rva": 284945960,
+    "kind": "data",
+    "name": "??_7EventProperty@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 142,
+    "rva": 284946664,
+    "kind": "data",
+    "name": "??_7IAuthTokensController@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 143,
+    "rva": 284758656,
+    "kind": "data",
+    "name": "??_7IDataFieldVisitor@telemetry_client@@6B@"
+  },
+  {
+    "ordinal": 144,
+    "rva": 284946744,
+    "kind": "data",
+    "name": "??_7ILogController@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 145,
+    "rva": 284947320,
+    "kind": "data",
+    "name": "??_7ILogManager@Events@Applications@Microsoft@@6BDebugEventDispatcher@123@@"
+  },
+  {
+    "ordinal": 146,
+    "rva": 284947288,
+    "kind": "data",
+    "name": "??_7ILogManager@Events@Applications@Microsoft@@6BIContextProvider@123@@"
+  },
+  {
+    "ordinal": 147,
+    "rva": 284946856,
+    "kind": "data",
+    "name": "??_7ILogManager@Events@Applications@Microsoft@@6BILogController@123@@"
+  },
+  {
+    "ordinal": 148,
+    "rva": 284946264,
+    "kind": "data",
+    "name": "??_7ILogger@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 149,
+    "rva": 284946568,
+    "kind": "data",
+    "name": "??_7IModule@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 150,
+    "rva": 284945992,
+    "kind": "data",
+    "name": "??_7ISemanticContext@Events@Applications@Microsoft@@6B@"
+  },
+  {
+    "ordinal": 151,
+    "rva": 202297312,
+    "kind": "function",
+    "name": "?AddEventListener@DebugEventSource@Events@Applications@Microsoft@@UEAAXW4DebugEventType@234@AEAVDebugEventListener@234@@Z"
+  },
+  {
+    "ordinal": 152,
+    "rva": 202310448,
+    "kind": "function",
+    "name": "?AddModule@ILogConfiguration@Events@Applications@Microsoft@@QEAAXPEBDAEBV?$shared_ptr@VIModule@Events@Applications@Microsoft@@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 153,
+    "rva": 202297744,
+    "kind": "function",
+    "name": "?AttachEventSource@DebugEventSource@Events@Applications@Microsoft@@UEAA_NAEAV1234@@Z"
+  },
+  {
+    "ordinal": 154,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?ClearExperimentIds@ISemanticContext@Events@Applications@Microsoft@@UEAAXXZ"
+  },
+  {
+    "ordinal": 155,
+    "rva": 202301776,
+    "kind": "function",
+    "name": "?CreateLogManager@LogManagerProvider@Events@Applications@Microsoft@@SAPEAVILogManager@234@AEAVILogConfiguration@234@AEAW4status_t@234@@Z"
+  },
+  {
+    "ordinal": 156,
+    "rva": 202301760,
+    "kind": "function",
+    "name": "?CreateLogManager@LogManagerProvider@Events@Applications@Microsoft@@SAPEAVILogManager@234@PEBDAEAW4status_t@234@_K@Z"
+  },
+  {
+    "ordinal": 157,
+    "rva": 202300880,
+    "kind": "function",
+    "name": "?CreateLogManager@LogManagerProvider@Events@Applications@Microsoft@@SAPEAVILogManager@234@PEBD_NAEAVILogConfiguration@234@AEAW4status_t@234@_K@Z"
+  },
+  {
+    "ordinal": 158,
+    "rva": 202301792,
+    "kind": "function",
+    "name": "?DestroyLogManager@LogManagerProvider@Events@Applications@Microsoft@@SA?AW4status_t@234@PEBD@Z"
+  },
+  {
+    "ordinal": 159,
+    "rva": 202297888,
+    "kind": "function",
+    "name": "?DetachEventSource@DebugEventSource@Events@Applications@Microsoft@@UEAA_NAEAV1234@@Z"
+  },
+  {
+    "ordinal": 160,
+    "rva": 87826912,
+    "kind": "function",
+    "name": "?DispatchEvent@DebugEventSource@Events@Applications@Microsoft@@UEAA_NVDebugEvent@234@@Z"
+  },
+  {
+    "ordinal": 161,
+    "rva": 223342496,
+    "kind": "function",
+    "name": "?DispatchEventBroadcast@ILogManager@Events@Applications@Microsoft@@SA_NVDebugEvent@234@@Z"
+  },
+  {
+    "ordinal": 162,
+    "rva": 223365392,
+    "kind": "function",
+    "name": "?FromJSON@Events@Applications@Microsoft@@YA?AVILogConfiguration@123@PEBD@Z"
+  },
+  {
+    "ordinal": 163,
+    "rva": 223363648,
+    "kind": "function",
+    "name": "?FromLogConfiguration@Events@Applications@Microsoft@@YA?AVILogConfiguration@123@AEAULogConfiguration@Telemetry@23@@Z"
+  },
+  {
+    "ordinal": 164,
+    "rva": 202309040,
+    "kind": "function",
+    "name": "?Get@LogManagerProvider@Events@Applications@Microsoft@@CAPEAVILogManager@234@AEAVILogConfiguration@234@AEAW4status_t@234@@Z"
+  },
+  {
+    "ordinal": 165,
+    "rva": 202309104,
+    "kind": "function",
+    "name": "?Get@LogManagerProvider@Events@Applications@Microsoft@@CAPEAVILogManager@234@PEBDAEAW4status_t@234@@Z"
+  },
+  {
+    "ordinal": 166,
+    "rva": 202280304,
+    "kind": "function",
+    "name": "?GetDataInspector@ILogManager@Events@Applications@Microsoft@@UEAA?AV?$shared_ptr@VIDataInspector@Events@Applications@Microsoft@@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 167,
+    "rva": 223363632,
+    "kind": "function",
+    "name": "?GetDefaultConfiguration@Events@Applications@Microsoft@@YAAEBVILogConfiguration@123@XZ"
+  },
+  {
+    "ordinal": 168,
+    "rva": 138972896,
+    "kind": "function",
+    "name": "?GetLatency@EventProperties@Events@Applications@Microsoft@@QEBA?AW4EventLatency@234@XZ"
+  },
+  {
+    "ordinal": 169,
+    "rva": 202310640,
+    "kind": "function",
+    "name": "?GetModule@ILogConfiguration@Events@Applications@Microsoft@@QEAA?AV?$shared_ptr@VIModule@Events@Applications@Microsoft@@@__Cr@std@@PEBD@Z"
+  },
+  {
+    "ordinal": 170,
+    "rva": 88631840,
+    "kind": "function",
+    "name": "?GetModules@ILogConfiguration@Events@Applications@Microsoft@@QEAAAEAV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$shared_ptr@VIModule@Events@Applications@Microsoft@@@23@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$shared_ptr@VIModule@Events@Applications@Microsoft@@@23@@__Cr@std@@@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 171,
+    "rva": 88287568,
+    "kind": "function",
+    "name": "?GetName@EventProperties@Events@Applications@Microsoft@@QEBAAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 172,
+    "rva": 202283648,
+    "kind": "function",
+    "name": "?GetPersistence@EventProperties@Events@Applications@Microsoft@@QEBA?AW4EventPersistence@234@XZ"
+  },
+  {
+    "ordinal": 173,
+    "rva": 202285792,
+    "kind": "function",
+    "name": "?GetPiiProperties@EventProperties@Events@Applications@Microsoft@@QEBA?BV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@U?$pair@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@W4PiiKind@Events@Applications@Microsoft@@@23@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@U?$pair@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@W4PiiKind@Events@Applications@Microsoft@@@23@@__Cr@std@@@23@@__Cr@std@@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 174,
+    "rva": 96586688,
+    "kind": "function",
+    "name": "?GetPolicyBitFlags@EventProperties@Events@Applications@Microsoft@@QEBA_KXZ"
+  },
+  {
+    "ordinal": 175,
+    "rva": 202283680,
+    "kind": "function",
+    "name": "?GetPopSample@EventProperties@Events@Applications@Microsoft@@QEBANXZ"
+  },
+  {
+    "ordinal": 176,
+    "rva": 138972896,
+    "kind": "function",
+    "name": "?GetPriority@EventProperties@Events@Applications@Microsoft@@QEBA?AW4EventPriority@234@XZ"
+  },
+  {
+    "ordinal": 177,
+    "rva": 202284192,
+    "kind": "function",
+    "name": "?GetProperties@EventProperties@Events@Applications@Microsoft@@QEBAAEBV?$map@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@U?$less@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@Events@Applications@Microsoft@@@__Cr@std@@@23@@__Cr@std@@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 178,
+    "rva": 202283536,
+    "kind": "function",
+    "name": "?GetTimestamp@EventProperties@Events@Applications@Microsoft@@QEBA_JXZ"
+  },
+  {
+    "ordinal": 179,
+    "rva": 202284032,
+    "kind": "function",
+    "name": "?GetType@EventProperties@Events@Applications@Microsoft@@QEBAAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 180,
+    "rva": 202311088,
+    "kind": "function",
+    "name": "?HasConfig@ILogConfiguration@Events@Applications@Microsoft@@QEAA_NPEBD@Z"
+  },
+  {
+    "ordinal": 181,
+    "rva": 202263968,
+    "kind": "function",
+    "name": "?Hash@GUID_t@Events@Applications@Microsoft@@QEBA_KXZ"
+  },
+  {
+    "ordinal": 182,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?Initialize@IModule@Events@Applications@Microsoft@@UEAAXPEAVILogManager@234@@Z"
+  },
+  {
+    "ordinal": 183,
+    "rva": 202310224,
+    "kind": "function",
+    "name": "?Release@LogManagerProvider@Events@Applications@Microsoft@@SA?AW4status_t@234@AEAVILogConfiguration@234@@Z"
+  },
+  {
+    "ordinal": 184,
+    "rva": 202309120,
+    "kind": "function",
+    "name": "?Release@LogManagerProvider@Events@Applications@Microsoft@@SA?AW4status_t@234@PEBD@Z"
+  },
+  {
+    "ordinal": 185,
+    "rva": 202297504,
+    "kind": "function",
+    "name": "?RemoveEventListener@DebugEventSource@Events@Applications@Microsoft@@UEAAXW4DebugEventType@234@AEAVDebugEventListener@234@@Z"
+  },
+  {
+    "ordinal": 186,
+    "rva": 202272624,
+    "kind": "function",
+    "name": "?SetAppEnv@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 187,
+    "rva": 202273968,
+    "kind": "function",
+    "name": "?SetAppExperimentETag@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 188,
+    "rva": 202273744,
+    "kind": "function",
+    "name": "?SetAppExperimentIds@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 189,
+    "rva": 202274208,
+    "kind": "function",
+    "name": "?SetAppExperimentImpressionId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 190,
+    "rva": 202272848,
+    "kind": "function",
+    "name": "?SetAppId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 191,
+    "rva": 202273520,
+    "kind": "function",
+    "name": "?SetAppLanguage@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 192,
+    "rva": 202273072,
+    "kind": "function",
+    "name": "?SetAppName@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 193,
+    "rva": 202273296,
+    "kind": "function",
+    "name": "?SetAppVersion@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 194,
+    "rva": 202278320,
+    "kind": "function",
+    "name": "?SetCommercialId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 195,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?SetCommonField@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEBUEventProperty@234@@Z"
+  },
+  {
+    "ordinal": 196,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?SetCustomField@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEBUEventProperty@234@@Z"
+  },
+  {
+    "ordinal": 197,
+    "rva": 202275104,
+    "kind": "function",
+    "name": "?SetDeviceClass@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 198,
+    "rva": 202274432,
+    "kind": "function",
+    "name": "?SetDeviceId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 199,
+    "rva": 202274656,
+    "kind": "function",
+    "name": "?SetDeviceMake@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 200,
+    "rva": 202274880,
+    "kind": "function",
+    "name": "?SetDeviceModel@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 201,
+    "rva": 202275328,
+    "kind": "function",
+    "name": "?SetDeviceOrgId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 202,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?SetEventExperimentIds@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@0@Z"
+  },
+  {
+    "ordinal": 203,
+    "rva": 202283616,
+    "kind": "function",
+    "name": "?SetLatency@EventProperties@Events@Applications@Microsoft@@QEAAXW4EventLatency@234@@Z"
+  },
+  {
+    "ordinal": 204,
+    "rva": 202271552,
+    "kind": "function",
+    "name": "?SetLevel@EventProperties@Events@Applications@Microsoft@@QEAAXE@Z"
+  },
+  {
+    "ordinal": 205,
+    "rva": 202281712,
+    "kind": "function",
+    "name": "?SetName@EventProperties@Events@Applications@Microsoft@@QEAA_NAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 206,
+    "rva": 202275552,
+    "kind": "function",
+    "name": "?SetNetworkCost@ISemanticContext@Events@Applications@Microsoft@@UEAAXW4NetworkCost@234@@Z"
+  },
+  {
+    "ordinal": 207,
+    "rva": 202275808,
+    "kind": "function",
+    "name": "?SetNetworkProvider@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 208,
+    "rva": 202276032,
+    "kind": "function",
+    "name": "?SetNetworkType@ISemanticContext@Events@Applications@Microsoft@@UEAAXW4NetworkType@234@@Z"
+  },
+  {
+    "ordinal": 209,
+    "rva": 202276736,
+    "kind": "function",
+    "name": "?SetOsBuild@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 210,
+    "rva": 202276288,
+    "kind": "function",
+    "name": "?SetOsName@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 211,
+    "rva": 202276512,
+    "kind": "function",
+    "name": "?SetOsVersion@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 212,
+    "rva": 202283632,
+    "kind": "function",
+    "name": "?SetPersistence@EventProperties@Events@Applications@Microsoft@@QEAAXW4EventPersistence@234@@Z"
+  },
+  {
+    "ordinal": 213,
+    "rva": 202283696,
+    "kind": "function",
+    "name": "?SetPolicyBitFlags@EventProperties@Events@Applications@Microsoft@@QEAAX_K@Z"
+  },
+  {
+    "ordinal": 214,
+    "rva": 202283664,
+    "kind": "function",
+    "name": "?SetPopsample@EventProperties@Events@Applications@Microsoft@@QEAAXN@Z"
+  },
+  {
+    "ordinal": 215,
+    "rva": 202283552,
+    "kind": "function",
+    "name": "?SetPriority@EventProperties@Events@Applications@Microsoft@@QEAAXW4EventPriority@234@@Z"
+  },
+  {
+    "ordinal": 216,
+    "rva": 202284592,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@0W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 217,
+    "rva": 202285376,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEAV?$vector@NV?$allocator@N@__Cr@std@@@67@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 218,
+    "rva": 202285504,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEAV?$vector@UGUID_t@Events@Applications@Microsoft@@V?$allocator@UGUID_t@Events@Applications@Microsoft@@@__Cr@std@@@67@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 219,
+    "rva": 202285632,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEAV?$vector@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@V?$allocator@V?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@23@@67@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 220,
+    "rva": 202285248,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@AEAV?$vector@_JV?$allocator@_J@__Cr@std@@@67@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 221,
+    "rva": 202271856,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@CW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 222,
+    "rva": 202271728,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@EW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 223,
+    "rva": 202272112,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@FW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 224,
+    "rva": 202272368,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@GW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 225,
+    "rva": 202272240,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@HW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 226,
+    "rva": 202272496,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@IW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 227,
+    "rva": 202284720,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@NW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 228,
+    "rva": 202284464,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@PEBDW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 229,
+    "rva": 202284224,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UEventProperty@234@@Z"
+  },
+  {
+    "ordinal": 230,
+    "rva": 202285104,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@UGUID_t@234@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 231,
+    "rva": 202284960,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@Utime_ticks_t@234@W4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 232,
+    "rva": 202271984,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@_JW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 233,
+    "rva": 202271984,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@_KW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 234,
+    "rva": 202284832,
+    "kind": "function",
+    "name": "?SetProperty@EventProperties@Events@Applications@Microsoft@@QEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@_NW4PiiKind@234@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 235,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?SetTicket@ISemanticContext@Events@Applications@Microsoft@@UEAAXW4TicketType@234@AEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 236,
+    "rva": 202283520,
+    "kind": "function",
+    "name": "?SetTimestamp@EventProperties@Events@Applications@Microsoft@@QEAAX_J@Z"
+  },
+  {
+    "ordinal": 237,
+    "rva": 202283712,
+    "kind": "function",
+    "name": "?SetType@EventProperties@Events@Applications@Microsoft@@QEAA_NAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 238,
+    "rva": 202277424,
+    "kind": "function",
+    "name": "?SetUserANID@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 239,
+    "rva": 202277648,
+    "kind": "function",
+    "name": "?SetUserAdvertisingId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 240,
+    "rva": 202276960,
+    "kind": "function",
+    "name": "?SetUserId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@W4PiiKind@234@@Z"
+  },
+  {
+    "ordinal": 241,
+    "rva": 202277872,
+    "kind": "function",
+    "name": "?SetUserLanguage@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 242,
+    "rva": 202277200,
+    "kind": "function",
+    "name": "?SetUserMsaId@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 243,
+    "rva": 202278096,
+    "kind": "function",
+    "name": "?SetUserTimeZone@ISemanticContext@Events@Applications@Microsoft@@UEAAXAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 244,
+    "rva": 87590192,
+    "kind": "function",
+    "name": "?Teardown@IModule@Events@Applications@Microsoft@@UEAAXXZ"
+  },
+  {
+    "ordinal": 245,
+    "rva": 202284048,
+    "kind": "function",
+    "name": "?TryGetLevel@EventProperties@Events@Applications@Microsoft@@QEBA?AV?$tuple@_NE@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 246,
+    "rva": 202265680,
+    "kind": "function",
+    "name": "?clear@EventProperty@Events@Applications@Microsoft@@QEAAXXZ"
+  },
+  {
+    "ordinal": 247,
+    "rva": 202263840,
+    "kind": "function",
+    "name": "?convertUintVectorToGUID@GUID_t@Events@Applications@Microsoft@@SA?AU_GUID@@AEBV?$vector@EV?$allocator@E@__Cr@std@@@__Cr@std@@@Z"
+  },
+  {
+    "ordinal": 248,
+    "rva": 202264160,
+    "kind": "function",
+    "name": "?copydata@EventProperty@Events@Applications@Microsoft@@AEAAXPEBU1234@@Z"
+  },
+  {
+    "ordinal": 249,
+    "rva": 202268224,
+    "kind": "function",
+    "name": "?empty@EventProperty@Events@Applications@Microsoft@@QEAA_NXZ"
+  },
+  {
+    "ordinal": 250,
+    "rva": 202285760,
+    "kind": "function",
+    "name": "?erase@EventProperties@Events@Applications@Microsoft@@QEAA_KAEBV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@W4DataCategory@234@@Z"
+  },
+  {
+    "ordinal": 251,
+    "rva": 333364776,
+    "kind": "data",
+    "name": "?lock@?1??stateLock@DebugEventSource@Events@Applications@Microsoft@@KAAEAVrecursive_mutex@__Cr@std@@XZ@4V678@A"
+  },
+  {
+    "ordinal": 252,
+    "rva": 202286688,
+    "kind": "function",
+    "name": "?pack@EventProperties@Events@Applications@Microsoft@@QEAAPEAUevt_prop@@XZ"
+  },
+  {
+    "ordinal": 253,
+    "rva": 202279040,
+    "kind": "function",
+    "name": "?stateLock@DebugEventSource@Events@Applications@Microsoft@@KAAEAVrecursive_mutex@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 254,
+    "rva": 202263664,
+    "kind": "function",
+    "name": "?to_bytes@GUID_t@Events@Applications@Microsoft@@QEBAXAEAY0BA@E@Z"
+  },
+  {
+    "ordinal": 255,
+    "rva": 202268928,
+    "kind": "function",
+    "name": "?to_string@EventProperty@Events@Applications@Microsoft@@UEBA?AV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 256,
+    "rva": 202263952,
+    "kind": "function",
+    "name": "?to_string@GUID_t@Events@Applications@Microsoft@@QEBA?AV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@XZ"
+  },
+  {
+    "ordinal": 257,
+    "rva": 202266128,
+    "kind": "function",
+    "name": "?type_name@EventProperty@Events@Applications@Microsoft@@SAPEBDI@Z"
+  },
+  {
+    "ordinal": 258,
+    "rva": 202287616,
+    "kind": "function",
+    "name": "?unpack@EventProperties@Events@Applications@Microsoft@@QEAA_NPEBUevt_prop@@_K@Z"
+  },
+  {
+    "ordinal": 259,
+    "rva": 21206896,
+    "kind": "function",
+    "name": "ChromeMain"
+  },
+  {
+    "ordinal": 260,
+    "rva": 114533488,
+    "kind": "function",
+    "name": "CrashForExceptionInNonABICompliantCodeRange"
+  },
+  {
+    "ordinal": 261,
+    "rva": 41732976,
+    "kind": "function",
+    "name": "CreateSmartScreenClient"
+  },
+  {
+    "ordinal": 262,
+    "rva": 198493056,
+    "kind": "function",
+    "name": "CreateTestWebClientProxy"
+  },
+  {
+    "ordinal": 263,
+    "rva": 202447984,
+    "kind": "function",
+    "name": "EdgeGetPasskeyAuthenticatorPluginClassFactory"
+  },
+  {
+    "ordinal": 264,
+    "rva": 202447824,
+    "kind": "function",
+    "name": "EdgeLaunchBrowserToHandleBackgroundTaskEvent"
+  },
+  {
+    "ordinal": 265,
+    "rva": 202447504,
+    "kind": "function",
+    "name": "ExportSpartanCookies"
+  },
+  {
+    "ordinal": 266,
+    "rva": 23646800,
+    "kind": "function",
+    "name": "GetHandleVerifier"
+  },
+  {
+    "ordinal": 267,
+    "rva": 23736400,
+    "kind": "function",
+    "name": "IsSandboxedProcess"
+  },
+  {
+    "ordinal": 268,
+    "rva": 50651232,
+    "kind": "function",
+    "name": "RelaunchChromeBrowserWithNewCommandLineIfNeeded"
+  },
+  {
+    "ordinal": 269,
+    "rva": 219485472,
+    "kind": "function",
+    "name": "argon2_ctx"
+  },
+  {
+    "ordinal": 270,
+    "rva": 219487408,
+    "kind": "function",
+    "name": "argon2_encodedlen"
+  },
+  {
+    "ordinal": 271,
+    "rva": 219487376,
+    "kind": "function",
+    "name": "argon2_error_message"
+  },
+  {
+    "ordinal": 272,
+    "rva": 219485728,
+    "kind": "function",
+    "name": "argon2_hash"
+  },
+  {
+    "ordinal": 273,
+    "rva": 219485392,
+    "kind": "function",
+    "name": "argon2_type2string"
+  },
+  {
+    "ordinal": 274,
+    "rva": 219486768,
+    "kind": "function",
+    "name": "argon2_verify"
+  },
+  {
+    "ordinal": 275,
+    "rva": 219487136,
+    "kind": "function",
+    "name": "argon2_verify_ctx"
+  },
+  {
+    "ordinal": 276,
+    "rva": 219487280,
+    "kind": "function",
+    "name": "argon2d_ctx"
+  },
+  {
+    "ordinal": 277,
+    "rva": 219486416,
+    "kind": "function",
+    "name": "argon2d_hash_encoded"
+  },
+  {
+    "ordinal": 278,
+    "rva": 219486512,
+    "kind": "function",
+    "name": "argon2d_hash_raw"
+  },
+  {
+    "ordinal": 279,
+    "rva": 219487248,
+    "kind": "function",
+    "name": "argon2d_verify"
+  },
+  {
+    "ordinal": 280,
+    "rva": 219487328,
+    "kind": "function",
+    "name": "argon2d_verify_ctx"
+  },
+  {
+    "ordinal": 281,
+    "rva": 219487296,
+    "kind": "function",
+    "name": "argon2i_ctx"
+  },
+  {
+    "ordinal": 282,
+    "rva": 219486240,
+    "kind": "function",
+    "name": "argon2i_hash_encoded"
+  },
+  {
+    "ordinal": 283,
+    "rva": 219486336,
+    "kind": "function",
+    "name": "argon2i_hash_raw"
+  },
+  {
+    "ordinal": 284,
+    "rva": 219487232,
+    "kind": "function",
+    "name": "argon2i_verify"
+  },
+  {
+    "ordinal": 285,
+    "rva": 219487344,
+    "kind": "function",
+    "name": "argon2i_verify_ctx"
+  },
+  {
+    "ordinal": 286,
+    "rva": 219487312,
+    "kind": "function",
+    "name": "argon2id_ctx"
+  },
+  {
+    "ordinal": 287,
+    "rva": 219486592,
+    "kind": "function",
+    "name": "argon2id_hash_encoded"
+  },
+  {
+    "ordinal": 288,
+    "rva": 219486688,
+    "kind": "function",
+    "name": "argon2id_hash_raw"
+  },
+  {
+    "ordinal": 289,
+    "rva": 219487264,
+    "kind": "function",
+    "name": "argon2id_verify"
+  },
+  {
+    "ordinal": 290,
+    "rva": 219487360,
+    "kind": "function",
+    "name": "argon2id_verify_ctx"
+  },
+  {
+    "ordinal": 291,
+    "rva": 202298544,
+    "kind": "function",
+    "name": "evt_api_call_default"
+  },
+  {
+    "ordinal": 292,
+    "rva": 211902368,
+    "kind": "function",
+    "name": "sqlite3_dbdata_init"
+  }
+]
