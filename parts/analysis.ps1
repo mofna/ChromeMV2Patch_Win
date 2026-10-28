@@ -2168,11 +2168,18 @@ function Classify-Candidate([uint64]$Address) {
     # Keep tree-node and result-use checks; argument instruction order is no longer fixed.
     if($unaffected[0].Op -eq 'mov' -and $unaffected[0].Args -match '^(r\w+),qword ptr \[(r\w+)\+8\]$') {
         $loaded=$Matches[1]; $node=$Matches[2]
+        $continuation=$effect.After
+        # Win64 callees preserve these saved registers. Accept only copies restoring the original live-in value.
+        for($i=0;$continuation.Address -ne $normal.Address -and $i -lt 4;$i++) {
+            if($continuation.Op -ne 'mov' -or $continuation.Args -notmatch '^(rax|rcx|rdx|r8|r9|r10|r11),(rbx|rbp|rsi|rdi|r12|r13|r14|r15)$' -or
+                (Resolve-Value $Matches[2] $effect.State) -ne $Matches[1]) {throw 'Unknown startup register restoration'}
+            $continuation=Next-Real $continuation.End
+        }
         if($unaffected[1].Op -ne 'test' -or $unaffected[1].Args -ne "$loaded,$loaded" -or
             @($unaffected | Where-Object {$_.Op -eq 'jne' -and $_.Target -lt $_.Address}).Count -eq 0 -or
             $effect.State['r8'] -ne "[$node+38h]" -or
-            $effect.State['rcx'] -notmatch '^r\w+$' -or $effect.State['rdx'] -notmatch '^r\w+$' -or
-            $effect.State['rcx'] -eq $effect.State['rdx'] -or $effect.After.Address -ne $normal.Address) {throw 'Startup argument or continuation mismatch'}
+            $effect.State['rcx'] -notmatch '^(r\w+|\[rsp\+[0-9a-f]+h\])$' -or $effect.State['rdx'] -notmatch '^r\w+$' -or
+            $effect.State['rcx'] -eq $effect.State['rdx'] -or $continuation.Address -ne $normal.Address) {throw 'Startup argument or continuation mismatch'}
         $kind='skip-startup-disable'
     } else {
         $normalCall=Read-CallSetup $normal.Address
@@ -2242,8 +2249,8 @@ function Test-Callee([uint64]$rva,[string]$kind) {
                     try {$state[(Canonical-Register $dest)]=$origin} catch {}
                 } else {
                     try {$where=Resolve-Value $dest $state} catch {$where='unknown'}
-                    if($where -eq 'qword ptr [{rdx}]') {$facts.VectorResult=$true}; if($where -eq 'byte ptr [{rdx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.VectorFlag=$true}; if($where -eq 'qword ptr [{rcx}]') {$facts.WriteNode=$true}
-                    if($where -eq 'byte ptr [{rcx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.WriteInserted=$true}
+                    if($where -eq 'qword ptr [{rdx}]') {$facts.VectorResult=$true}; if($where -eq 'byte ptr [{rdx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.VectorFlag=$true}; if($where -in @('qword ptr [{rcx}]','qword ptr [rcx]')) {$facts.WriteNode=$true}
+                    if($where -in @('byte ptr [{rcx}+8]','byte ptr [rcx+8]') -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.WriteInserted=$true}
                     if($where -eq 'qword ptr [{rcx}+10h]' -and $src -eq '0') {$facts.ClearString=$true}
                 }
                 continue
