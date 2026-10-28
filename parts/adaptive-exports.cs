@@ -146,7 +146,13 @@ public static class Mv2AdaptiveExports
             }
         }
     }
-    public static int CheckStaticImports(byte[] exeBytes, byte[] originalBytes) {
+    static string BrowserDllName(string name) {
+        Require(name == "msedge.dll" || name == "chrome.dll" || name == "vivaldi.dll" || name == "opera_browser.dll", "Expected a supported browser DLL filename");
+        return name;
+    }
+    public static int CheckStaticImports(byte[] exeBytes, byte[] originalBytes) { return CheckStaticImports(exeBytes, originalBytes, "msedge.dll"); }
+    public static int CheckStaticImports(byte[] exeBytes, byte[] originalBytes, string dllName) {
+        dllName = BrowserDllName(dllName);
         var exe = new Image(exeBytes, false, false);
         var original = new Image(originalBytes, true, true);
         long rva = exe.U32(exe.optional + 120), size = exe.U32(exe.optional + 124);
@@ -163,7 +169,7 @@ public static class Mv2AdaptiveExports
             if (zero) { terminated = true; break; }
             string[] components = exe.String(exe.U32(at + 12), 16384).Replace('\\', '/').Split('/');
             string moduleName = components[components.Length - 1];
-            if (!moduleName.Equals("msedge", StringComparison.OrdinalIgnoreCase) && !moduleName.Equals("msedge.dll", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!moduleName.Equals(Path.GetFileNameWithoutExtension(dllName), StringComparison.OrdinalIgnoreCase) && !moduleName.Equals(dllName, StringComparison.OrdinalIgnoreCase)) continue;
             long lookupRva = exe.U32(at);
             Require(lookupRva != 0, "Browser import names are unavailable");
             bool lookupTerminated = false;
@@ -226,7 +232,10 @@ public static class Mv2AdaptiveExports
         strings.Write(bytes, 0, bytes.Length);
         return result;
     }
-    public static Result Generate(byte[] templateBytes, byte[] originalBytes) {
+    public static Result Generate(byte[] templateBytes, byte[] originalBytes) { return Generate(templateBytes, originalBytes, "msedge.dll"); }
+    public static Result Generate(byte[] templateBytes, byte[] originalBytes, string dllName) {
+        dllName = BrowserDllName(dllName);
+        string originalModule = "original\\" + Path.GetFileNameWithoutExtension(dllName);
         var template = new Image(templateBytes, true, true);
         var original = new Image(originalBytes, true, true);
         long start = ThunkStart(template);
@@ -242,13 +251,13 @@ public static class Mv2AdaptiveExports
         long eat = 40, nameTable = eat + original.functions * 4, ordinalTable = nameTable + names.Count * 4;
         long stringStart = ordinalTable + names.Count * 2;
         using (var strings = new MemoryStream()) {
-            long moduleName = AddString(strings, stringStart, newRva, "msedge.dll");
+            long moduleName = AddString(strings, stringStart, newRva, dllName);
             long[] addresses = new long[original.entries.Count];
             for (int i = 0; i < addresses.Length; i++) {
                 var entry = original.entries[i];
                 if (entry.kind == "function") addresses[i] = start + (entry.ordinal - 1) * 16;
                 else if (entry.kind != "hole") addresses[i] = AddString(strings, stringStart, newRva,
-                    entry.kind == "forwarder" ? entry.forwarder : "original\\msedge.#" + entry.ordinal);
+                    entry.kind == "forwarder" ? entry.forwarder : originalModule + ".#" + entry.ordinal);
             }
             var nameRvas = new List<long>();
             foreach (var name in names.Keys) nameRvas.Add(AddString(strings, stringStart, newRva, name));
@@ -285,10 +294,10 @@ public static class Mv2AdaptiveExports
                 Require(output.rva == addresses[i] && output.names.Count == source.names.Count, "Generated export differs");
                 for (int j = 0; j < source.names.Count; j++) Require(output.names[j] == source.names[j], "Generated export name differs");
                 Require(output.kind == (source.kind == "data" || source.kind == "forwarder" ? "forwarder" : source.kind), "Generated export kind differs");
-                if (output.kind == "forwarder") Require(output.forwarder == (source.kind == "forwarder" ? source.forwarder : "original\\msedge.#" + source.ordinal), "Generated forwarder differs");
+                if (output.kind == "forwarder") Require(output.forwarder == (source.kind == "forwarder" ? source.forwarder : originalModule + ".#" + source.ordinal), "Generated forwarder differs");
             }
             foreach (var section in template.sections) Require(Equal(result, (int)section.raw, templateBytes, (int)section.raw, (int)section.rawSize), "Template section changed");
-            var receipt = new Receipt { templateSHA256 = Hash(templateBytes), originalSHA256 = Hash(originalBytes), proxySHA256 = Hash(result),
+            var receipt = new Receipt { dllName = dllName, templateSHA256 = Hash(templateBytes), originalSHA256 = Hash(originalBytes), proxySHA256 = Hash(result),
                 exportBase = original.ordinalBase, exportSlots = original.functions, exportNames = original.names };
             foreach (var entry in original.entries) {
                 switch (entry.kind) { case "function": receipt.functions++; break; case "data": receipt.data++; break;
@@ -303,10 +312,10 @@ public static class Mv2AdaptiveExports
             directory ? "Unsafe generation directory" : "Unsafe generated file");
     }
     public static Receipt Prepare(string root, string templatePath, string originalPath, string browserPath) {
-        Require(Path.GetFileName(originalPath).Equals("msedge.dll", StringComparison.OrdinalIgnoreCase), "Expected msedge.dll");
+        string dllName = BrowserDllName(Path.GetFileName(originalPath).ToLowerInvariant());
         byte[] original = File.ReadAllBytes(originalPath), browser = File.ReadAllBytes(browserPath);
-        int imports = CheckStaticImports(browser, original);
-        var generated = Generate(File.ReadAllBytes(templatePath), original);
+        int imports = CheckStaticImports(browser, original, dllName);
+        var generated = Generate(File.ReadAllBytes(templatePath), original, dllName);
         string directory = Path.GetFullPath(root);
         Ordinary(directory, true);
         foreach (string component in new [] { "generated", generated.receipt.templateSHA256, generated.receipt.originalSHA256 }) {
@@ -314,7 +323,7 @@ public static class Mv2AdaptiveExports
             Directory.CreateDirectory(directory);
             Ordinary(directory, true);
         }
-        string output = Path.Combine(directory, "msedge.dll");
+        string output = Path.Combine(directory, dllName);
         try {
             using (var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
                 stream.Write(generated.bytes, 0, generated.bytes.Length); stream.Flush(true);

@@ -314,41 +314,6 @@ public static class ChromiumMv2Native {
     return ([ChromiumMv2Native]::Run($Library, $Mode, $Path) | ConvertFrom-Json)
 }
 
-function Test-Mv2ProxyExports {
-    param([object[]]$OriginalExports, [object[]]$ProxyExports)
-    if ($OriginalExports.Count -eq 292) {
-        $edgeLayout = Get-Content -LiteralPath (Join-Path $Mv2PackageRoot 'native\edge\edge-export-layout.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($ProxyExports.Count -ne 293 -or $edgeLayout.Count -ne 292) { return $false }
-        for ($i = 0; $i -lt 292; $i++) {
-            $expected = $edgeLayout[$i]; $original = $OriginalExports[$i]; $proxy = $ProxyExports[$i]
-            $proxyKind = if ($expected.kind -eq 'data') { 'forwarder' } else { 'function' }
-            if ($original.ordinal -ne $expected.ordinal -or $original.name -cne $expected.name -or $original.kind -cne $expected.kind -or
-                $proxy.ordinal -ne $expected.ordinal -or $proxy.name -cne $expected.name -or $proxy.kind -cne $proxyKind) { return $false }
-        }
-        return ($ProxyExports[292].ordinal -eq 293 -and $ProxyExports[292].name -ceq 'Mv2InspectW' -and $ProxyExports[292].kind -ceq 'function')
-    }
-    $key = { param($Entries) (@($Entries | ForEach-Object { '{0}:{1}:{2}' -f $_.ordinal, $_.name, $_.kind }) -join '|') }
-    $originalKey = & $key $OriginalExports
-    $proxyKey = & $key $ProxyExports
-    $names = @('ChromeMain', 'CrashForExceptionInNonABICompliantCodeRange', 'GetHandleVerifier',
-        'IsSandboxedProcess', 'RelaunchChromeBrowserWithNewCommandLineIfNeeded', 'sqlite3_dbdata_init')
-    $six = @(for ($i = 0; $i -lt $names.Count; $i++) {
-        [pscustomobject]@{ ordinal = $i + 1; name = $names[$i]; kind = 'function' }
-    })
-    $braveNames = @($names[0..4]) + @(
-        'argon2_ctx','argon2_encodedlen','argon2_error_message','argon2_hash','argon2_type2string','argon2_verify','argon2_verify_ctx',
-        'argon2d_ctx','argon2d_hash_encoded','argon2d_hash_raw','argon2d_verify','argon2d_verify_ctx',
-        'argon2i_ctx','argon2i_hash_encoded','argon2i_hash_raw','argon2i_verify','argon2i_verify_ctx',
-        'argon2id_ctx','argon2id_hash_encoded','argon2id_hash_raw','argon2id_verify','argon2id_verify_ctx','sqlite3_dbdata_init')
-    $brave = @(for ($i = 0; $i -lt $braveNames.Count; $i++) {
-        [pscustomobject]@{ ordinal = $i + 1; name = $braveNames[$i]; kind = 'function' }
-    })
-    $inspector = [pscustomobject]@{ ordinal = 29; name = 'Mv2InspectW'; kind = 'function' }
-    if ($proxyKey -cne (& $key @($brave + $inspector))) { return $false }
-    $five = @($six[0..3]) + [pscustomobject]@{ ordinal = 5; name = 'sqlite3_dbdata_init'; kind = 'function' }
-    return ($originalKey -ceq (& $key $six) -or $originalKey -ceq (& $key $five) -or $originalKey -ceq (& $key $brave))
-}
-
 function Assert-Mv2OriginalFiles {
     param([string]$Directory, $Record)
     if (-not (Test-Path -LiteralPath $Directory -PathType Container) -or
@@ -405,7 +370,10 @@ function Set-Mv2ProxyConfig {
 function New-Mv2OriginalLayout {
     param([string]$Directory, [string]$Stage, [string]$Source, [string]$Browser)
     $dllName = [IO.Path]::GetFileName($Source)
+    $originalName = [IO.Path]::GetFileName([Diagnostics.FileVersionInfo]::GetVersionInfo($Browser).OriginalFilename)
     $names = @($dllName, ($dllName + '.sig'), ([IO.Path]::GetFileName($Browser) + '.sig'))
+    if ($originalName) { $names += $originalName + '.sig' }
+    $names = @($names | Select-Object -Unique)
     $files = @()
     foreach ($name in $names) {
         $path = if ($name -eq $dllName) { $Source } else { Join-Path $Directory $name }
@@ -439,40 +407,32 @@ function Install-Mv2Proxy {
     $record = Get-Mv2ProxyRecord $resolved
     $environment = Get-Mv2Environment $resolved
     if (-not $Location) { $Location = if ($environment.Portable) { 'Portable' } else { 'Script' } }
-    $automaticProxy = -not $ProxyPath -and -not $environment.ProxyDll
     if (-not $ProxyPath) { $ProxyPath = $environment.ProxyDll }
     $source = if ($record -and $record.State -ne 'Removed') { $originalPath } else { $resolved }
     $nativeDirectory = if ([IO.Path]::GetFileName($resolved) -ieq 'msedge.dll') { 'native\edge' } else { 'native' }
     $audit = Join-Path (Join-Path $Mv2PackageRoot $nativeDirectory) 'chromium_mv2_proxy.dll'
     $resourceAudit = Invoke-Mv2NativeAudit $audit 'resources' $source
     if (-not $resourceAudit.compatible) { throw 'Resource-routing imports are missing or ambiguous. The browser was not changed.' }
-    $adaptiveExports = $null
-    if ($nativeDirectory -eq 'native\edge') {
-        if (-not $automaticProxy) { throw 'The adaptive trial does not accept custom proxy files.' }
-        $adaptiveBrowser = Resolve-RamBrowserExecutable $resolved $BrowserExecutable ([Diagnostics.FileVersionInfo]::GetVersionInfo($source))
-        $null = Invoke-Mv2NativeAudit $audit 'exe' $adaptiveBrowser
-        if (-not ('Mv2AdaptiveExports' -as [type])) {
-            Add-Type -Path (Join-Path $Mv2PackageRoot 'parts\adaptive-exports.cs') -ErrorAction Stop
-        }
-        $adaptiveExports = [Mv2AdaptiveExports]::Prepare($Mv2PackageRoot, $audit, $source, $adaptiveBrowser)
-        $ProxyPath = (Resolve-Path -LiteralPath $adaptiveExports.proxyPath).Path
-        if ($adaptiveExports.format -ne 'AdaptiveExports1' -or
-            $adaptiveExports.templateSHA256 -ne (Get-FileHash -LiteralPath $audit -Algorithm SHA256).Hash -or
-            $adaptiveExports.originalSHA256 -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -or
-            $adaptiveExports.browserSHA256 -ne (Get-FileHash -LiteralPath $adaptiveBrowser -Algorithm SHA256).Hash -or
-            $adaptiveExports.proxySHA256 -ne (Get-FileHash -LiteralPath $ProxyPath -Algorithm SHA256).Hash) {
-            throw 'Adaptive generation inputs or output changed. The browser was not changed.'
-        }
-    } else {
-        $originalExports = @(Invoke-Mv2NativeAudit $audit 'exports' $source)
-        if ($automaticProxy) { $ProxyPath = $audit }
+    if ($ProxyPath) {
         $ProxyPath = (Resolve-Path -LiteralPath $ProxyPath).Path
         if ((Get-FileHash -LiteralPath $ProxyPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $audit -Algorithm SHA256).Hash) {
-            throw 'This routed layout only accepts the qualified bundled proxy. A custom proxy needs separate resource-routing validation.'
+            throw 'Export generation only accepts the bundled template for this browser ABI. A custom proxy requires separate validation.'
         }
-        if (-not (Test-Mv2ProxyExports $originalExports @(Invoke-Mv2NativeAudit $audit 'exports' $ProxyPath))) {
-            throw 'Proxy exports do not support this browser layout.'
-        }
+    }
+    $selectedTemplate = $ProxyPath
+    $adaptiveBrowser = Resolve-RamBrowserExecutable $resolved $BrowserExecutable ([Diagnostics.FileVersionInfo]::GetVersionInfo($source))
+    $null = Invoke-Mv2NativeAudit $audit 'exe' $adaptiveBrowser
+    if (-not ('Mv2AdaptiveExports' -as [type])) {
+        Add-Type -Path (Join-Path $Mv2PackageRoot 'parts\adaptive-exports.cs') -ErrorAction Stop
+    }
+    $adaptiveExports = [Mv2AdaptiveExports]::Prepare($Mv2PackageRoot, $audit, $source, $adaptiveBrowser)
+    $ProxyPath = (Resolve-Path -LiteralPath $adaptiveExports.proxyPath).Path
+    if ($adaptiveExports.format -ne 'AdaptiveExports1' -or
+        $adaptiveExports.templateSHA256 -ne (Get-FileHash -LiteralPath $audit -Algorithm SHA256).Hash -or
+        $adaptiveExports.originalSHA256 -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -or
+        $adaptiveExports.browserSHA256 -ne (Get-FileHash -LiteralPath $adaptiveBrowser -Algorithm SHA256).Hash -or
+        $adaptiveExports.proxySHA256 -ne (Get-FileHash -LiteralPath $ProxyPath -Algorithm SHA256).Hash) {
+        throw 'Adaptive generation inputs or output changed. The browser was not changed.'
     }
     if ($ProxyPath -eq $resolved -or $ProxyPath -eq $originalPath) { throw 'The proxy source must be a separate file.' }
     if ($record) { Assert-Mv2OriginalFiles $originalDirectory $record }
@@ -572,8 +532,7 @@ function Install-Mv2Proxy {
     $record.State = 'Installed'
     $record.PreviousProxySHA256 = $null
     Write-Mv2Json $recordPath $record
-    $savedProxy = if ($automaticProxy) { $null } else { $ProxyPath }
-    $null = Save-Mv2Environment $resolved 'Dll' $Location $savedProxy
+    $null = Save-Mv2Environment $resolved 'Dll' $Location $selectedTemplate
     if ($obsoleteOriginal) {
         try {
             $retired = Get-Content -LiteralPath ($obsoleteOriginal + '.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -611,10 +570,17 @@ function Remove-Mv2Proxy {
         Split-Path -Parent $resolved
     } else { Get-PatchLockRoot $resolved }
     $browser = Join-Path $browserDirectory $record.BrowserName
-    Stop-Mv2BrowserBackground $browser
     $originalDirectory = Join-Path (Split-Path -Parent $resolved) 'original'
     Assert-Mv2OriginalFiles $originalDirectory $record
     $original = Join-Path $originalDirectory $record.DllName
+    $browserExists = Test-Path -LiteralPath $browser -PathType Leaf
+    $originalName = if ($browserExists) { [Diagnostics.FileVersionInfo]::GetVersionInfo($browser).OriginalFilename } else { $null }
+    if (-not $browserExists -or ($originalName -and $originalName -ine $record.BrowserName)) {
+        # The updater may have promoted a staged EXE to its canonical name.
+        # An absent OriginalFilename is not evidence of a rename.
+        $browser = Resolve-RamBrowserExecutable $resolved '' ([Diagnostics.FileVersionInfo]::GetVersionInfo($original))
+    }
+    Stop-Mv2BrowserBackground $browser
     $bytes = [IO.File]::ReadAllBytes($original)
     if ((Get-ByteArraySha256 $bytes) -ne $record.OriginalSHA256) { throw 'The original DLL does not match the receipt.' }
     $hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash

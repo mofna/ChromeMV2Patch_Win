@@ -399,9 +399,18 @@ function Resolve-RamBrowserExecutable {
             # Opera's browser DLL has no version resource. Do not match other
             # versionless helper EXEs; the installer still audits the selected EXE.
             $matches = @($candidates | Where-Object { $_.Name -in $knownNames })
+            # A versionless DLL belongs to its adjacent browser, not an outer
+            # launcher that may already point to a different installed version.
+            $adjacent = @($matches | Where-Object { (Split-Path -Parent $_.FullName) -ieq (Split-Path -Parent $TargetPath) })
+            if ($adjacent.Count) { $matches = $adjacent }
         }
         $knownMatches = @($matches | Where-Object { $_.Name -in $knownNames })
         if ($knownMatches.Count) { $matches = $knownMatches }
+        elseif ($knownNames) {
+            # Updaters may stage a renamed browser beside the older launcher.
+            # Keep the product/version checks and exclude same-version helpers.
+            $matches = @($matches | Where-Object { $_.VersionInfo.OriginalFilename -in $knownNames })
+        }
         if ([IO.Path]::GetFileName($TargetPath) -ieq 'msedge.dll' -and $matches.Count -gt 1) {
             # Edge also keeps a same-version EXE in its version directory.
             $launcher = @($matches | Where-Object { $_.FullName -ieq (Join-Path $root 'msedge.exe') })
