@@ -355,10 +355,10 @@ RAM起動時の`-BackupProfile`では、拡張機能本体と設定ストレー�
 
 | ブラウザー | 最終確認ビルド | 確認範囲 |
 | --- | --- | --- |
-| Chrome Stable | 156.0.8078.74 | パッチ適用とMV2通信 |
-| Chrome Beta / Chrome for Testing | 157.0.8103.15 | パッチ動作 |
-| Chrome Dev | 158.0.8117.2 | パッチ適用とMV2通信 |
-| Chrome Canary / Chrome for Testing | 158.0.8127.2 | パッチ動作 |
+| Chrome Stable | 157.0.8103.78 | パッチ適用とMV2通信 |
+| Chrome Beta / Chrome for Testing | 158.0.8127.18 | パッチ動作 |
+| Chrome Dev | 159.0.8144.0 | パッチ適用とMV2通信 |
+| Chrome Canary / Chrome for Testing | 159.0.8154.2 | パッチ動作 |
 | Edge | 156.0.4314.50 / 157.0.4341.24 / 158.0.4357.0 | 通常起動とDLL転送 |
 | Vivaldi | 8.2.4133.52 | 通常起動とDLL転送 |
 | Brave | 155.1.97.56 | 通常起動とDLL転送 |

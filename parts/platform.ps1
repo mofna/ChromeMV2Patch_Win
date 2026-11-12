@@ -444,17 +444,30 @@ public static class Mv2SmallScan {
             p=Array.IndexOf(b,(byte)0x83,p,end-264-p); if(p<0) break;
             int q=Immediate(b,p,end);
             if(q>=0 && b[q]==2) {
+                int guard=q+1;
+                bool directGuard=(b[guard]>=0x7c && b[guard]<=0x7f) || (b[guard]==0x0f && b[guard+1]>=0x8c && b[guard+1]<=0x8f);
+                if(!directGuard && b[guard]!=0x90 && b[guard]!=0xeb && b[guard]!=0xe9) {p++;continue;}
+                if((b[guard]&0xf0)==0x70 && (b[guard]<0x7c || b[guard]>0x7f)) {p++;continue;}
+                if(b[guard]==0x0f && (b[guard+1]&0xf0)==0x80 && (b[guard+1]<0x8c || b[guard+1]>0x8f)) {p++;continue;}
                 int bits=0; bool typeMask=false;
-                for(int k=q+1;k<q+257;k++) {
-                    if(k+3<end && b[k]==10 && b[k+1]==1 && b[k+2]==0 && b[k+3]==0) typeMask=true; int v=Immediate(b,k,end); if(v<0) continue;
+                for(int k=Math.Max(start,q-256);k<q+257;k++) {
+                    if(k>start && (b[k-1]&0xf8)==0xb8 && k+3<end && b[k]==10 && b[k+1]==1 && b[k+2]==0 && b[k+3]==0) typeMask=true; int v=Immediate(b,k,end); if(v<0) continue;
                     if(b[v]==1) bits|=1; else if(b[v]==5) bits|=2; else if(b[v]==10) bits|=4;
                     if(bits==7 || (bits==6 && typeMask)) break;
                 }
-                if(bits==7 || (bits==6 && typeMask)) {
+                if(!typeMask) {
+                    int scan=Math.Max(start,q-4096), limit=Math.Min(end-4,q+4096);
+                    while(scan<limit) {
+                        scan=Array.IndexOf(b,(byte)10,scan,limit-scan); if(scan<0) break;
+                        if(scan>start && (b[scan-1]&0xf8)==0xb8 && b[scan+1]==1 && b[scan+2]==0 && b[scan+3]==0) {typeMask=true;break;}
+                        scan++;
+                    }
+                }
+                if(bits==7 || typeMask) {
                     int seed=p;
                     if(p>start && b[p-1]>=0x40 && b[p-1]<=0x4f) seed--;
                     if(seed>=2 && b[seed-2]==0x31 && b[seed-1]==0xc0) seed-=2; hits.Add(seed);
-                    if(hits.Count>64) throw new InvalidOperationException("Broad candidate budget exceeded");
+                    if(hits.Count>1024) throw new InvalidOperationException("Broad candidate budget exceeded");
                 }
             }
             p++;

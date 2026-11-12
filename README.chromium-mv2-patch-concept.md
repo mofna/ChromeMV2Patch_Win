@@ -5,7 +5,7 @@
 
 ## 対象となるChromiumの判定
 
-対象はWindows x64版で、Chromium 151から157の確認済みビルドの命令配置に対応している。
+対象はWindows x64版で、Chromium 151から159の確認済みビルドの命令配置に対応している。
 DLL置換方式の転送処理はVivaldi、Brave、Opera、Edgeにも対応する(ただし、現在MV2は制限されていないため解除効果はない)。
 製品ごとの最終確認ビルドは、[使い方の「動作確認済みビルド」](README.chromium-mv2-patcher.md#動作確認済みビルド)を参照。
 MV2廃止の影響対象かどうかは、[`manifest_v2_util::IsExtensionAffected()`](https://chromium.googlesource.com/chromium/src/+/lkgr/extensions/browser/manifest_v2_util.cc)が判定する。

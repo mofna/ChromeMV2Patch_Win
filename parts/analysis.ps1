@@ -1472,6 +1472,9 @@ function Get-Mv2NativeRules {
     $traceAdditional=@($RuleNames | Where-Object {$_ -in @('allow-enable-and-report','allow-enable-policy-inline','allow-install')}).Count -gt 0
     $traceManifests=$traceOriginal -or $traceAdditional
     $calleeCache=@{}
+    $constantCache=@{}
+    $callSummaries=@{}
+    $flowGraphs=@{}
     $pe=$PeInfo; $imageBase=[uint64]$PeInfo.ImageBase; $Inspect=$false
     $nativeState=@{offset=0L;lo=[uint64]0;hi=[uint64]0;cache=@{};decodeCount=0;engine=$null}
     $dumpRoot=Join-Path ([IO.Path]::GetTempPath()) ('ChromiumMV2Trace-'+[guid]::NewGuid())
@@ -1479,8 +1482,8 @@ function Get-Mv2NativeRules {
 function Native-Next([uint64]$at,[hashtable]$state) {
     for($n=0;$n -lt 16;$n++) {
         $ins=Next-Real $at
-        if($ins.Op -in @('mov','lea') -and $ins.Args -match '^(r\w+|e\w+),') {Apply-Copy $ins $state; $at=$ins.End; continue}
-        if($ins.Op -eq 'xor' -and $ins.Args -match '^(e\w+|r[0-9]+d),\1$') {$state[(Canonical-Register $Matches[1])]='0'; $at=$ins.End; continue}
+        if($ins.Op -in @('mov','lea') -and $ins.Args -match '^(r\w+|e\w+),') {if((Canonical-Register $Matches[1]) -eq 'rsp') {throw 'Predicate stack-pointer write'};Apply-Copy $ins $state; $at=$ins.End; continue}
+        if($ins.Op -eq 'xor' -and $ins.Args -match '^(e\w+|r[0-9]+d),\1$') {if((Canonical-Register $Matches[1]) -eq 'rsp') {throw 'Predicate stack-pointer write'};$state[(Canonical-Register $Matches[1])]='0'; $at=$ins.End; continue}
         return $ins
     }
     throw 'Extra copy budget exceeded'
@@ -1506,44 +1509,371 @@ function Native-BranchPatch($guard) {
     } else {throw 'Unsupported extra branch encoding'}
     return ,$raw
 }
-function Native-TypeSet($first,[hashtable]$state,[uint64]$normal) {
-    $branch=Next-Real $first.End
-    if($first.Args -match '^(.+),8$' -and $branch.Op -eq 'ja') {
-        $origin=Resolve-Value $Matches[1] $state
-        if((Next-Real $branch.Target).Address -ne $normal) {throw 'Type range does not reject to normal path'}
-        $mask=Next-Real $branch.End
-        if($mask.Op -ne 'mov' -or $mask.Args -notmatch '^(e\w+|r[0-9]+d),10Ah$' -or (Canonical-Register $Matches[1]) -eq 'rax') {throw 'Unknown type bit mask'}
-        $maskReg=Canonical-Register $Matches[1]; Apply-Copy $mask $state
-        $bt=Next-Real $mask.End
-        if($bt.Op -ne 'bt' -or $bt.Args -notmatch '^([^,]+),([^,]+)$') {throw 'No bounded type bit test'}
-        if((Canonical-Register $Matches[1]) -ne $maskReg -or (Resolve-Value $Matches[2] $state) -ne $origin) {throw 'Type bit index changed'}
-        $reject=Next-Real $bt.End
-        if($reject.Op -ne 'jae' -or (Next-Real $reject.Target).Address -ne $normal) {throw 'Type bit rejection changed'}
-        return [pscustomobject]@{Origin=$origin;Entry=(Next-Real $reject.End).Address;Offsets=@($first.Address);BitSet=$true}
+function Native-SameState([hashtable]$left,[hashtable]$right) {
+    foreach($key in @(@($left.Keys)+@($right.Keys)|Sort-Object -Unique)) {
+        if((Resolve-Value $key $left) -ne (Resolve-Value $key $right)) {return $false}
     }
-    $seen=@{}; $origin=$null; $entry=$null; $at=$first.Address; $offsets=@(); $equalState=$null
-    for($i=0;$i -lt 3;$i++) {
-        $cmp=Native-Next $at $state
-        if($cmp.Op -ne 'cmp' -or $cmp.Args -notmatch '^(.+),(1|3|8)$') {throw 'Incomplete type membership'}
-        $value=$Matches[2]; $valueOrigin=Resolve-Value $Matches[1] $state
-        if($seen.ContainsKey($value) -or ($origin -and $origin -ne $valueOrigin)) {throw 'Type membership value mismatch'}
-        $origin=$valueOrigin; $seen[$value]=$true; $offsets+=$cmp.Address
-        $j=Next-Real $cmp.End
-        if($j.Op -notin @('je','jne')) {throw 'Unsupported type equality'}
-        $equal=if($j.Op -eq 'je') {$j.Target} else {$j.End}
-        $other=if($j.Op -eq 'jne') {$j.Target} else {$j.End}
-        $equal=(Next-Real $equal).Address
-        if($entry -and $entry -ne $equal) {throw 'Type alternatives enter different paths'}
-        $entry=$equal; $at=$other
-        if($null -eq $equalState) {$equalState=$state.Clone()}
-        else {
-            foreach($key in @(@($equalState.Keys)+@($state.Keys) | Sort-Object -Unique)) {
-                if((Resolve-Value $key $equalState) -ne (Resolve-Value $key $state)) {throw 'Type alternatives carry different values'}
+    return $true
+}
+function Native-ValueEqual([string]$operand,[hashtable]$left,[hashtable]$right,[long]$mask=-1L) {
+    $a=Resolve-Value $operand $left;$b=Resolve-Value $operand $right
+    return ($a -eq $b -or ($a -match '^[0-9a-f]+h?$' -and $b -match '^[0-9a-f]+h?$' -and ((Native-Integer $a) -band $mask) -eq ((Native-Integer $b) -band $mask)))
+}
+function Native-SameContinuation([uint64]$left,[uint64]$right,[hashtable]$state,[hashtable]$other=$null,[long]$returnMask=-1L) {
+    $a=$state.Clone();$b=if($null -eq $other) {$state.Clone()} else {$other.Clone()}
+    $first=Native-Next $left $a;$second=Native-Next $right $b
+    if($first.Address -ne $second.Address) {return $false}
+    if($first.Op -in @('cmp','test','bt')) {foreach($operand in $first.Args.Split(',')) {if(!(Native-ValueEqual $operand $a $b)) {return $false}}}
+    $at=$first.Address
+    for($n=0;$n -lt 24;$n++) {
+        $ins=Native-Next $at $a;$expected=Native-Next $at $b
+        if($ins.Address -ne $expected.Address) {throw 'Cleanup paths differ'}
+        if($ins.Op -eq 'ret') {
+            if(!(Native-ValueEqual 'rax' $a $b $returnMask)) {return $false}
+            foreach($reg in @('rbx','rbp','rsi','rdi','r12','r13','r14','r15')) {if(!(Native-ValueEqual $reg $a $b)) {return $false}}
+            return $true
+        }
+        if($ins.Op -eq 'pop') {$reg=Canonical-Register $ins.Args;if($reg -eq 'rsp') {throw 'Cleanup stack pointer'};$a[$reg]=$b[$reg]='stack-pop:'+$ins.Address;$at=$ins.End;continue}
+        if(($ins.Op -eq 'add' -and $ins.Args.StartsWith('rsp,')) -or ($ins.Op -in @('movaps','movups','movdqa','movdqu') -and $ins.Args -match '^xmm[0-9]+,xmmword ptr \[rsp')) {$at=$ins.End;continue}
+        return $true
+    }
+    throw 'Cleanup budget exceeded'
+}
+function Native-DomainIntersection($domain,$ranges) {
+    foreach($a in $domain) {foreach($b in $ranges) {
+        $lo=[Math]::Max($a.Lo,$b.Lo);$hi=[Math]::Min($a.Hi,$b.Hi)
+        if($lo -le $hi) {[pscustomobject]@{Lo=$lo;Hi=$hi}}
+    }}
+}
+function Native-SymbolCopy($ins,[hashtable]$state) {
+    if($ins.Op -in @('nop','jmp')) {return $true}
+    if($ins.Args -notmatch '^(r(?:ax|bx|cx|dx|si|di|bp|[0-9]+)|e(?:ax|bx|cx|dx|si|di|bp)|r[0-9]+d),([^,]+)$') {return $false}
+    $dest=$Matches[1];$source=$Matches[2]
+    if($ins.Op -in @('mov','lea')) {Apply-Copy $ins $state;return $true}
+    if($ins.Op -eq 'xor') {
+        $left=Resolve-Value $dest $state;$right=Resolve-Value $source $state
+        $state[(Canonical-Register $dest)]=if($left -eq $right) {'0'} else {'xor('+((@($left,$right)|Sort-Object) -join ',')+')'}
+        return $true
+    }
+    return $false
+}
+function Native-EqualityKey([string]$left,[string]$right) {return (@($left,$right)|Sort-Object) -join '|'}
+function Native-CallContext($call,$graph) {
+    $suffix=[Collections.Generic.List[object]]::new();$at=$call.Address;$branch=$null;$next=0
+    for($i=0;$i -lt 16;$i++) {
+        $parents=@($graph.Parents[$at]);if($parents.Count -ne 1) {return $null}
+        $ins=$graph.Nodes[$parents[0]].Instruction
+        if($ins.Op -in @('je','jne')) {$branch=$ins;$next=$at;break}
+        if($ins.Op -notin @('mov','lea','xor','nop','jmp') -or $ins.Args -match '^(rsp|esp),|^(byte|dword|qword) ptr ') {return $null}
+        $suffix.Insert(0,$ins);$at=$ins.Address
+    }
+    if(!$branch) {return $null}
+    $parents=@($graph.Parents[$branch.Address]);if($parents.Count -ne 1) {return $null}
+    $compare=$graph.Nodes[$parents[0]].Instruction
+    if($compare.Op -ne 'cmp' -or $compare.Args -notmatch '^([^,]+),([^,]+)$') {return $null}
+    $left=$Matches[1];$right=$Matches[2];$prefix=[Collections.Generic.List[object]]::new();$at=$compare.Address
+    for($i=0;$i -lt 16;$i++) {
+        $parents=@($graph.Parents[$at]);if($parents.Count -ne 1) {break}
+        $ins=$graph.Nodes[$parents[0]].Instruction
+        if($ins.Op -notin @('mov','lea','xor','nop') -or $ins.Args -match '^(rsp|esp),|^(byte|dword|qword) ptr ') {break}
+        $prefix.Insert(0,$ins);$at=$ins.Address
+    }
+    $state=@{}
+    try {
+        foreach($ins in $prefix) {if(!(Native-SymbolCopy $ins $state)) {return $null}}
+        $key=Native-EqualityKey (Resolve-Value $left $state) (Resolve-Value $right $state)
+        foreach($ins in $suffix) {if(!(Native-SymbolCopy $ins $state)) {return $null}}
+        return @{Key=$key;Equal=(($branch.Op -eq 'je') -eq ($next -eq $branch.Target));State=$state}
+    } catch {return $null}
+}
+function Native-CallCannotReturn($summary,$context) {
+    if(!$summary.Returns) {return $true}
+    if(!$context) {return $false}
+    foreach($fact in $summary.Requirements) {
+        try {$key=Native-EqualityKey (Resolve-Value $fact.Left $context.State) (Resolve-Value $fact.Right $context.State)} catch {continue}
+        if($key -eq $context.Key -and $fact.Equal -ne $context.Equal) {return $true}
+    }
+    return $false
+}
+function Native-FlowGraph($span) {
+    if($flowGraphs.ContainsKey($span.Begin)) {return $flowGraphs[$span.Begin]}
+    $nodes=@{};$parents=@{};$queue=[Collections.Generic.Queue[uint64]]::new();$queue.Enqueue($span.Begin)
+    while($queue.Count) {
+        $at=$queue.Dequeue();if($nodes.ContainsKey($at)) {continue}
+        $ins=Read-Instruction $at
+        $all=@($(if($ins.Op -eq 'jmp') {@($ins.Target)} elseif($ins.Op -match '^j') {@($ins.End,$ins.Target)} elseif(Native-EndsFlow $ins) {@()} else {@($ins.End)}))
+        $edges=@($all|Where-Object {$_ -ge $span.Begin -and $_ -lt $span.End}|ForEach-Object {[uint64]$_})
+        $nodes[$at]=@{Instruction=$ins;Edges=$edges;External=@($all|Where-Object {$_ -lt $span.Begin -or $_ -ge $span.End})}
+        foreach($edge in $edges) {$parents[$edge]=@($parents[$edge])+@($at)|Where-Object {$null -ne $_};$queue.Enqueue($edge)}
+    }
+    $flowGraphs[$span.Begin]=@{Nodes=$nodes;Parents=$parents};return $flowGraphs[$span.Begin]
+}
+function Native-EndsFlow($ins) {return ($ins.Op -match '^(ret|ud)' -or ($ins.Op -eq 'int' -and (Native-Integer $ins.Args) -eq 0x29))}
+function Native-FrameSlot([string]$operand,[int]$sp,[hashtable]$registers) {
+    if($operand -notmatch '^(?:(byte|word|dword|qword|xmmword|ymmword) ptr )?\[(r\w+)(?:\+([0-9a-f]+)(h)?)?\]$') {return $null}
+    $width=switch($Matches[1]) {'byte' {1} 'word' {2} 'dword' {4} 'qword' {8} 'xmmword' {16} 'ymmword' {32} default {0}}
+    $base=$Matches[2];$disp=if($Matches[3]) {[int](Native-Integer ($Matches[3]+$Matches[4]))} else {0}
+    if($base -eq 'rsp') {return @{Offset=$sp+$disp;Width=$width}}
+    if($registers[$base] -like 'stack:*') {return @{Offset=[int]$registers[$base].Substring(6)+$disp;Width=$width}}
+    return $null
+}
+function Native-ArgumentProof([uint64]$address,[string]$argument) {
+    $saved=$nativeState.Clone();$decoder=$null;$suspended=$false
+    try {
+        $rva=$address-$imageBase;$section=@($pe.ExecutableRanges|Where-Object {$rva -ge $_.VirtualAddress -and $rva -lt $_.VirtualAddress+$_.Length})
+        if($section.Count -ne 1) {return $false}
+        $offset=$section[0].Start+$rva-$section[0].VirtualAddress
+        try {$span=Native-FunctionSpan $offset} catch {$span=[pscustomobject]@{Offset=$offset;Begin=$address;End=$address+4096}}
+        if($span.Begin -ne $address) {return $false}
+        $nativeState.engine.Dispose();$suspended=$true;$dump=Join-Path $dumpRoot 'return.dmp'
+        Write-NativeDump $dump ([long[]]@($offset)) ([uint64[]]@($address))
+        $decoder=[Mv2NativeDisassembler]::new($dump);$nativeState.engine=$decoder;$nativeState.lo=$address;$nativeState.hi=$span.End;$nativeState.cache=@{};$nativeState.functionSpan=$span;$nativeState.dumpPath=$dump
+        $preserved=@('rbx','rbp','rsi','rdi','r12','r13','r14','r15','xmm6','xmm7','xmm8','xmm9','xmm10','xmm11','xmm12','xmm13','xmm14','xmm15')
+        $initial=@{al='unknown'};foreach($reg in @('rax','rcx','rdx','r8','r9','r10','r11')+$preserved) {$initial[$reg]=$reg}
+        $graph=Native-FlowGraph $span;$incoming=@{};$incoming[$address]=@{SP=0;Registers=$initial;Slots=@{}}
+        $queue=[Collections.Generic.Queue[uint64]]::new();$queue.Enqueue($address);$steps=0
+        while($queue.Count) {
+            if(++$steps -gt 4096) {throw 'Output proof dataflow budget'}
+            $at=$queue.Dequeue();$prior=$incoming[$at];$regs=$prior.Registers.Clone();$slots=$prior.Slots.Clone();$sp=$prior.SP;$node=$graph.Nodes[$at];$ins=$node.Instruction
+            if($node.External.Count) {throw ('Output proof leaves function at '+$at.ToString('X'))}
+            if($ins.Op -eq 'ret') {if($ins.Args) {throw 'Callee stack cleanup'};continue}
+            if(Native-EndsFlow $ins) {continue}
+            if($ins.Op -eq 'call') {
+                if($sp -gt -32 -or (($sp+8) -band 15) -ne 0) {throw 'Win64 call frame'}
+                $context=Native-CallContext $ins $graph
+                if($context -and $ins.Target -and (Native-CallCannotReturn (Native-CallSummary $ins.Target) $context)) {continue}
+                foreach($slot in @($slots.Keys)) {if([int]$slot -lt $sp+32 -and $sp -lt [int]$slot+8) {$slots.Remove($slot)}}
+                # Win64 calls can write local output objects, not the caller's nonvolatile save area.
+                foreach($reg in @('rcx','rdx','r8','r9')) {if($regs[$reg] -like 'stack:*') {$point=[int]$regs[$reg].Substring(6);foreach($slot in @($slots.Keys)) {if($point -le [int]$slot -and $slots[$slot] -notin $preserved) {$slots.Remove($slot)}}}}
+                foreach($reg in @('rax','rcx','rdx','r8','r9','r10','r11')) {$regs[$reg]='unknown'}
+                $regs['al']='unknown'
+            } elseif($ins.Op -in @('push','pop')) {
+                if($ins.Op -eq 'push') {$sp-=8;if($regs[$ins.Args]) {$slots[$sp]=$regs[$ins.Args]} else {$slots.Remove($sp)}}
+                else {$reg=Canonical-Register $ins.Args;if($reg -eq 'rsp') {throw 'Unmodeled pop stack pointer'};if($slots.ContainsKey($sp)) {$regs[$reg]=$slots[$sp]} else {$regs[$reg]='unknown'};if($reg -eq 'rax') {$regs['al']=if($regs[$reg] -in @('0','1')) {$regs[$reg]} else {'unknown'}};$slots.Remove($sp);$sp+=8}
+            } elseif($ins.Op -in @('add','sub') -and $ins.Args -match '^rsp,([0-9a-f]+h?)$') {
+                $amount=[int](Native-Integer $Matches[1]);$sp+=if($ins.Op -eq 'sub') {-$amount} else {$amount}
+                if($sp -gt 0 -or $sp -lt -4096) {return $false}
+                foreach($slot in @($slots.Keys)) {if([int]$slot -lt $sp) {$slots.Remove($slot)}}
+            } elseif($ins.Op -notin @('cmp','test','bt','nop') -and $ins.Op -notmatch '^j') {
+                $parts=$ins.Args.Split(',');$dest=$parts[0];$source=if($parts.Count -eq 2) {$parts[1]} else {''}
+                $target=Native-FrameSlot $dest $sp $regs;$src=Native-FrameSlot $source $sp $regs
+                if($dest -in @('rsp','esp','sp','spl')) {throw 'Unmodeled stack-pointer write'}
+                $vectorMove=$ins.Op -in @('movaps','movups','movdqa','movdqu')
+                if($ins.Op -notin @('mov','lea','movzx','movsx','movsxd','xor','and','or','add','sub','adc','sbb','inc','dec','neg','not','rol','ror','shl','shr','sar','sal','imul','mul','div','idiv','vzeroupper') -and $ins.Op -notmatch '^(set|cmov)' -and !$vectorMove -and $dest -notmatch '^[xyz]mm[0-9]+$' -and !($ins.Op -eq 'int' -and (Native-Integer $ins.Args) -eq 3)) {throw ('Unmodeled callee effect: '+$ins.Text)}
+                if($ins.Op -in @('imul','mul','div','idiv')) {$regs['rax']='unknown';$regs['rdx']='unknown';$regs['al']='unknown'}
+                if($target -and $target.Width) {
+                    foreach($slot in @($slots.Keys)) {if($target.Offset -lt [int]$slot+8 -and [int]$slot -lt $target.Offset+$target.Width) {$slots.Remove($slot)}}
+                    if($ins.Op -eq 'mov' -and $target.Width -eq 8 -and $regs[$source]) {$slots[$target.Offset]=$regs[$source]}
+                }
+                if($target -and $target.Width -eq 16 -and $vectorMove -and $regs[$source]) {$slots[$target.Offset]=$regs[$source];$slots[$target.Offset+8]=$regs[$source]}
+                if($dest -match '^([xyz])mm([0-9]+)$') {
+                    $reg='xmm'+$Matches[2];$is128=$Matches[1] -eq 'x'
+                    $regs[$reg]=if($is128 -and $vectorMove -and $src -and $src.Width -eq 16 -and $slots[$src.Offset] -and $slots[$src.Offset] -eq $slots[$src.Offset+8]) {$slots[$src.Offset]} elseif($is128 -and $vectorMove -and $regs[$source]) {$regs[$source]} else {'unknown'}
+                } elseif($dest -match '^(r(?:ax|bx|cx|dx|si|di|bp|[0-9]+)|e(?:ax|bx|cx|dx|si|di|bp)|r[0-9]+d)$') {
+                    $reg=Canonical-Register $dest
+                    $value=if($ins.Op -eq 'lea' -and $src) {'stack:'+$src.Offset} elseif($ins.Op -eq 'mov' -and $src -and $src.Width -eq 8) {$slots[$src.Offset]} elseif($ins.Op -eq 'xor' -and $dest -eq $source) {'0'} elseif($source -match 'ptr (gs|fs):|^(word|xmmword|ymmword) ptr ') {'unknown'} elseif($ins.Op -in @('mov','lea')) {Resolve-Value $source $regs} else {$null}
+                    if($dest -match '^(e\w+|r[0-9]+d)$' -and $value -and $value -notmatch '^[0-9a-f]+h?$|^low32\(|^dword ptr ') {$value='low32('+$value+')'}
+                    if($value -and $value.Length -lt 192 -and $value -notlike '*unknown*') {$regs[$reg]=$value} else {$regs[$reg]='unknown'}
+                    if($reg -eq 'rax') {$regs['al']=if($value -in @('0','1')) {$value} else {'unknown'}}
+                } elseif($dest -match '^([abcd])(?:l|h|x)$') {$reg='r'+$Matches[1]+'x';$regs[$reg]='unknown';if($reg -eq 'rax') {$regs['al']=if($dest -eq 'al' -and $source -in @('0','1')) {$source} else {'unknown'}}}
+                elseif($dest -match '^(r[0-9]+)[bw]$') {$regs[$Matches[1]]='unknown'}
+                elseif($dest -match '^(si|di|bp|sp)(?:l)?$') {$regs['r'+$Matches[1]]='unknown'}
+            }
+            foreach($edge in $node.Edges) {
+                if(!$incoming.ContainsKey($edge)) {$incoming[$edge]=@{SP=$sp;Registers=$regs.Clone();Slots=$slots.Clone()};$queue.Enqueue($edge);continue}
+                $joined=$incoming[$edge];if($joined.SP -ne $sp) {throw 'Output proof stack height join'};$changed=$false
+                foreach($key in @($joined.Registers.Keys)) {
+                    if($joined.Registers[$key] -ne 'unknown' -and $joined.Registers[$key] -ne $regs[$key]) {
+                        $value=if($key -eq 'al' -and $joined.Registers[$key] -in @('0','1','bool') -and $regs[$key] -in @('0','1','bool')) {'bool'} else {'unknown'}
+                        if($value -ne $joined.Registers[$key]) {$joined.Registers[$key]=$value;$changed=$true}
+                    }
+                }
+                foreach($key in @($joined.Slots.Keys)) {if($joined.Slots[$key] -ne $slots[$key]) {$joined.Slots.Remove($key);$changed=$true}}
+                if($changed) {$queue.Enqueue($edge)}
             }
         }
+        $returns=@($incoming.Keys|Where-Object {$graph.Nodes[$_].Instruction.Op -eq 'ret'})
+        if(!$returns.Count -or @($returns|Where-Object {($argument -and $incoming[$_].Registers['rax'] -ne $argument) -or $incoming[$_].SP -ne 0}).Count) {throw ('Output proof return origins: '+(($returns|ForEach-Object {'{0:X}:{1}:SP{2}' -f $_,$incoming[$_].Registers['rax'],$incoming[$_].SP}) -join ';'))}
+        foreach($at in $returns) {foreach($reg in $preserved) {if($incoming[$at].Registers[$reg] -ne $reg) {throw ('Nonvolatile register return origin: '+$reg)}}}
+        $facts=@{}
+        foreach($at in $incoming.Keys) {
+            $ins=$graph.Nodes[$at].Instruction;$state=$incoming[$at].Registers
+            if($ins.Op -in @('call','jmp') -and $ins.Target -and $state['r8'] -eq 'low32(rdx)' -and $state['rdx'] -eq 'rcx') {$facts.ForwardResource=$true}
+            if($ins.Op -eq 'mov' -and $ins.Args -match '^(.+),(.+)$') {
+                $dest=$Matches[1];$src=$Matches[2];$origin=if($src -match '^(?:[abcd][lhx]|si|di|bp|sp|[sd]il|[bs]pl|r[0-9]+[bw])$|ptr (gs|fs):|^(word|xmmword|ymmword) ptr ') {'unknown'} else {Resolve-Value $src $state};$where=if($dest -match '^(qword|dword|byte) ptr ') {Resolve-Value $dest $state} else {''}
+                if($origin -in @('qword ptr [rcx]','qword ptr [{rcx}]')) {$facts.VectorBegin=$true}
+                if($origin -in @('qword ptr [rcx+8]','qword ptr [{rcx}+8]')) {$facts.VectorLength=$true}
+                if($origin -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.IntKey=$true}
+                if($origin -in @('qword ptr [rdx+8]','qword ptr [{rdx}+8]')) {$facts.TreeRoot=$true}
+                if($origin -in @('qword ptr [r8]','qword ptr [{r8}]')) {$facts.Key=$true}
+                if($origin -match '^qword ptr \[(?:\{)?rdx(?:\})?\+') {$facts.PolicyObject=$true}
+                if($where -in @('qword ptr [rdx]','qword ptr [{rdx}]')) {$facts.VectorResult=$true}
+                if($where -eq 'byte ptr [{rdx}+8]' -and $src -eq 'al' -and $state['al'] -in @('0','bool')) {$facts.VectorFlag=$true}
+                if($where -in @('qword ptr [rcx]','qword ptr [{rcx}]')) {$facts.WriteNode=$true}
+                if($where -in @('byte ptr [rcx+8]','byte ptr [{rcx}+8]') -and $src -eq 'al' -and $state['al'] -in @('0','bool')) {$facts.WriteInserted=$true}
+                if($where -in @('qword ptr [rcx+10h]','qword ptr [{rcx}+10h]') -and $src -eq '0') {$facts.ClearString=$true}
+            }
+            if($ins.Op -eq 'lea' -and $ins.Args -match '\*4\]') {$facts.Scale4=$true}
+            if($ins.Op -eq 'cmp' -and $ins.Args -match '^dword ptr \[.+\],(r\w+d)$' -and (Resolve-Value $Matches[1] $state) -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.CompareKey=$true}
+            if($ins.Op -eq 'cmp' -and $ins.Args -match ',5$') {$facts.ComponentPolicy=$true}
+        }
+        return [pscustomobject]@{Facts=$facts;Returns=$returns.Count;Instructions=$incoming.Count;Output=$argument}
+    } catch {Write-Verbose ('Argument proof '+$address.ToString('X')+': '+$_.Exception.Message);return $false}
+    finally {if($decoder) {$decoder.Dispose()};foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]};if($suspended) {$nativeState.engine=[Mv2NativeDisassembler]::new($saved.dumpPath)}}
+}
+function Native-CallSummary([uint64]$address) {
+    if($callSummaries.ContainsKey($address)) {return $callSummaries[$address]}
+    $unknown=[pscustomobject]@{Returns=$true;Clobbers=@('rax','rcx','rdx','r8','r9','r10','r11');Requirements=@()}
+    $saved=$nativeState.Clone();$decoder=$null;$suspended=$false
+    try {
+        $rva=$address-$imageBase
+        $range=@($pe.ExecutableRanges|Where-Object {$rva -ge $_.VirtualAddress -and $rva+4096 -le $_.VirtualAddress+$_.Length})
+        if($range.Count -ne 1) {return $unknown}
+        $nativeState.engine.Dispose();$suspended=$true
+        $offset=$range[0].Start+$rva-$range[0].VirtualAddress;$dump=Join-Path $dumpRoot 'call.dmp'
+        Write-NativeDump $dump ([long[]]@($offset)) ([uint64[]]@($address))
+        $decoder=[Mv2NativeDisassembler]::new($dump)
+        $nativeState.lo=$address;$nativeState.hi=$address+4096;$nativeState.cache=@{};$nativeState.engine=$decoder
+        $pending=[Collections.Generic.Stack[object]]::new();$pending.Push(@{At=$address;Writes=@{};Seen=@{};Values=@{};Facts=@{};Flag=$null})
+        $returns=@();$steps=0
+        while($pending.Count) {
+            $frame=$pending.Pop()
+            if(++$steps -gt 64 -or $frame.Seen.ContainsKey($frame.At)) {return $unknown}
+            $frame.Seen[$frame.At]=$true;$ins=Read-Instruction $frame.At
+            if($ins.Op -eq 'ret') {if($ins.Args) {return $unknown};$returns+=,$frame;continue}
+            if($ins.Op -eq 'ud2' -or ($ins.Op -eq 'int' -and (Native-Integer $ins.Args) -eq 0x29)) {continue}
+            if($ins.Op -eq 'jmp' -or $ins.Op -match '^j') {
+                if($ins.Target -lt $address -or $ins.Target -ge $address+4096) {return $unknown}
+                $taken=@{At=$ins.Target;Writes=$frame.Writes.Clone();Seen=$frame.Seen.Clone();Values=$frame.Values.Clone();Facts=$frame.Facts.Clone();Flag=$frame.Flag}
+                if($frame.Flag -and $ins.Op -in @('je','jne')) {
+                    $key=Native-EqualityKey $frame.Flag.Left $frame.Flag.Right
+                    $taken.Facts[$key]=@{Left=$frame.Flag.Left;Right=$frame.Flag.Right;Equal=$ins.Op -eq 'je'}
+                    $frame.Facts[$key]=@{Left=$frame.Flag.Left;Right=$frame.Flag.Right;Equal=$ins.Op -eq 'jne'}
+                }
+                $pending.Push($taken)
+                if($ins.Op -eq 'jmp') {continue}
+            } elseif($ins.Op -notin @('cmp','test','nop')) {
+                if($ins.Op -notin @('mov','movzx','movsx','movsxd','lea','xor','and','or','add','sub','rol','ror','shr','shl','not','neg') -or $ins.Args -notmatch '^(r(?:ax|bx|cx|dx|si|di|bp|[0-9]+)|e(?:ax|bx|cx|dx|si|di|bp)|r[0-9]+d),') {return $unknown}
+                $frame.Writes[(Canonical-Register $Matches[1])]=$true
+                if(!(Native-SymbolCopy $ins $frame.Values)) {$frame.Values[(Canonical-Register $ins.Args.Split(',')[0])]='unknown-'+$ins.Address}
+                if($ins.Op -notin @('mov','lea','movzx','movsx','movsxd')) {$frame.Flag=$null}
+            }
+            if($ins.Op -eq 'cmp' -and $ins.Args -match '^([^,]+),([^,]+)$') {$frame.Flag=@{Left=(Resolve-Value $Matches[1] $frame.Values);Right=(Resolve-Value $Matches[2] $frame.Values)}}
+            if($ins.Op -eq 'test') {$frame.Flag=$null}
+            $frame.At=$ins.End;$pending.Push($frame)
+        }
+        $required=@(if($returns.Count) {foreach($key in $returns[0].Facts.Keys) {$fact=$returns[0].Facts[$key];if(@($returns|Where-Object {!$_.Facts.ContainsKey($key) -or $_.Facts[$key].Equal -ne $fact.Equal}).Count -eq 0) {$fact}}})
+        $summary=[pscustomobject]@{Returns=$returns.Count -gt 0;Clobbers=@($returns|ForEach-Object {$_.Writes.Keys}|Sort-Object -Unique);Requirements=$required}
+        $callSummaries[$address]=$summary;return $summary
+    } catch {$callSummaries[$address]=$unknown;return $unknown}
+    finally {if($decoder) {$decoder.Dispose()};foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]};if($suspended) {$nativeState.engine=[Mv2NativeDisassembler]::new($saved.dumpPath)}}
+}
+function Native-ConstantsAt([uint64]$address) {
+    $span=$nativeState.functionSpan
+    if(!$span) {return @{}}
+    if(!$constantCache.ContainsKey($span.Begin)) {
+        $graph=Native-FlowGraph $span
+        $incoming=@{};$incoming[$span.Begin]=@{}
+        $pending=[Collections.Generic.Queue[uint64]]::new();$pending.Enqueue($span.Begin);$steps=0
+        while($pending.Count) {
+            if(++$steps -gt 4096) {throw 'Reaching-definition budget exceeded'}
+            $at=$pending.Dequeue();$values=$incoming[$at].Clone();$ins=Read-Instruction $at
+            if($ins.Op -eq 'call') {
+                $context=Native-CallContext $ins $graph
+                $summary=if($ins.Target -and ($values.Count -or $context)) {Native-CallSummary $ins.Target} else {[pscustomobject]@{Returns=$true;Clobbers=@('rax','rcx','rdx','r8','r9','r10','r11');Requirements=@()}}
+                if(Native-CallCannotReturn $summary $context) {continue}
+                foreach($reg in $summary.Clobbers) {$values.Remove($reg)}
+            }
+            elseif($ins.Op -eq 'xor' -and $ins.Args -match '^(e\w+|r[0-9]+d),\1$') {$values[(Canonical-Register $Matches[1])]='0'}
+            elseif($ins.Op -notin @('cmp','test','bt','push','nop') -and $ins.Op -notmatch '^j') {
+                $dest=$ins.Args.Split(',')[0];$reg=$null;$full=$dest -match '^(?:r(?:ax|bx|cx|dx|si|di|bp|sp|[0-9]+)|e(?:ax|bx|cx|dx|si|di|bp|sp)|r[0-9]+d)$'
+                if($full) {$reg=Canonical-Register $dest}
+                elseif($dest -match '^([abcd])(?:l|h|x)$') {$reg='r'+$Matches[1]+'x'}
+                elseif($dest -match '^(r[0-9]+)[bw]$') {$reg=$Matches[1]}
+                elseif($dest -match '^(si|di|bp|sp)(?:l)?$') {$reg='r'+$Matches[1]}
+                $value=$null
+                if($full -and $ins.Op -eq 'mov' -and $ins.Args -match '^[^,]+,([0-9a-f]+h?)$') {$value=$Matches[1]}
+                elseif($full -and $ins.Op -eq 'mov' -and $ins.Args -match '^[^,]+,(r(?:ax|bx|cx|dx|si|di|bp|sp|[0-9]+)|e(?:ax|bx|cx|dx|si|di|bp|sp)|r[0-9]+d)$') {$value=$values[(Canonical-Register $Matches[1])]}
+                if($reg) {if($null -ne $value) {$values[$reg]=$value} else {$values.Remove($reg)}}
+                if($ins.Op -notin @('mov','lea','movzx','movsx','movsxd','add','sub','and','or','xor','inc','dec','pop') -and $ins.Op -notmatch '^set') {$values.Clear()}
+            }
+            $edges=if($ins.Op -eq 'jmp') {@($ins.Target)} elseif($ins.Op -match '^j') {@($ins.End,$ins.Target)} elseif(Native-EndsFlow $ins) {@()} else {@($ins.End)}
+            foreach($edge in $edges|Where-Object {$_ -ge $span.Begin -and $_ -lt $span.End}) {
+                if(!$incoming.ContainsKey([uint64]$edge)) {$incoming[[uint64]$edge]=$values.Clone();$pending.Enqueue([uint64]$edge);continue}
+                $joined=$incoming[[uint64]$edge];$changed=$false
+                foreach($key in @($joined.Keys)) {if(!$values.ContainsKey($key) -or $values[$key] -ne $joined[$key]) {$joined.Remove($key);$changed=$true}}
+                if($changed) {$pending.Enqueue([uint64]$edge)}
+            }
+        }
+        $constantCache[$span.Begin]=$incoming
     }
-    if((Next-Real $at).Address -ne $normal) {throw 'Excluded type does not reach the normal path'}
-    return [pscustomobject]@{Origin=$origin;Entry=$entry;Offsets=$offsets;BitSet=$false}
+    $result=$constantCache[$span.Begin][$address]
+    if($result) {return $result.Clone()}
+    return @{}
+}
+function Native-TypeSet($first,[hashtable]$state,[uint64]$normal,[hashtable]$normalState=$null,[long]$returnMask=-1L) {
+    if($first.Op -ne 'cmp' -or $first.Args -notmatch '^(.+),([0-9a-f]+h?)$') {throw 'No type input'}
+    $origin=Resolve-Value $Matches[1] $state
+    if($origin -notmatch '^(dword ptr |low32\()') {throw 'Type input width'}
+    $baseline=if($null -eq $normalState) {$state.Clone()} else {$normalState.Clone()};$maskInputs=@{}
+    $pending=[Collections.Generic.Stack[object]]::new()
+    $pending.Push(@{At=$first.Address;State=$state.Clone();Domain=@([pscustomobject]@{Lo=0L;Hi=4294967295L});Seen=@{}})
+    $entries=@();$accepted=@();$offsets=@();$steps=0;$forks=0
+    while($pending.Count) {
+        $frame=$pending.Pop()
+        if(++$steps -gt 64) {throw 'Type decision budget exceeded'}
+        if(Native-SameContinuation $frame.At $normal $frame.State $baseline $returnMask) {continue}
+        $ins=Native-Next $frame.At $frame.State
+        if($frame.Seen.ContainsKey($ins.Address)) {throw 'Type decision cycle'}
+        $frame.Seen[$ins.Address]=$true
+        $yes=@();$no=@()
+        if($ins.Op -eq 'cmp' -and $ins.Args -match '^(.+),([0-9a-f]+h?)$' -and (Resolve-Value $Matches[1] $frame.State) -eq $origin) {
+            $value=Native-Integer $Matches[2]
+            if($value -lt 0 -or $value -gt 4294967295L) {throw 'Type comparison width'}
+            $branch=Next-Real $ins.End
+            $less=@([pscustomobject]@{Lo=0L;Hi=$value-1});$equal=@([pscustomobject]@{Lo=$value;Hi=$value});$greater=@([pscustomobject]@{Lo=$value+1;Hi=4294967295L})
+            switch($branch.Op) {
+                'je' {$yes=$equal;$no=$less+$greater}
+                'jne' {$yes=$less+$greater;$no=$equal}
+                'ja' {$yes=$greater;$no=$less+$equal}
+                'jbe' {$yes=$less+$equal;$no=$greater}
+                'jb' {$yes=$less;$no=$equal+$greater}
+                'jae' {$yes=$equal+$greater;$no=$less}
+                default {throw 'Unsupported type comparison condition'}
+            }
+        } elseif($ins.Op -eq 'bt' -and $ins.Args -match '^([^,]+),([^,]+)$' -and (Resolve-Value $Matches[2] $frame.State) -eq $origin) {
+            $maskOperand=$Matches[1];$maskValue=Resolve-Value $maskOperand $frame.State
+            if($maskValue -notmatch '^[0-9a-f]+h?$') {
+                $reg=Canonical-Register $maskOperand;$constant=(Native-ConstantsAt $ins.Address)[$reg]
+                if($null -eq $constant) {throw 'Bit mask has no path-independent definition'}
+                $frame.State[$reg]=$constant;$maskValue=$constant
+            }
+            $maskInputs[(Canonical-Register $maskOperand)]=$maskValue;$mask=Native-Integer $maskValue
+            if($mask -gt 4294967295L -or @($frame.Domain|Where-Object {$_.Hi -gt 31}).Count) {throw 'Unbounded type bit index'}
+            $set=@(0..31|Where-Object {($mask -band (1L -shl $_)) -ne 0}|ForEach-Object {[pscustomobject]@{Lo=[long]$_;Hi=[long]$_}})
+            $clear=@(0..31|Where-Object {($mask -band (1L -shl $_)) -eq 0}|ForEach-Object {[pscustomobject]@{Lo=[long]$_;Hi=[long]$_}})
+            $branch=Next-Real $ins.End
+            if($branch.Op -eq 'jb') {$yes=$set;$no=$clear}
+            elseif($branch.Op -eq 'jae') {$yes=$clear;$no=$set}
+            else {throw 'Unsupported bit-test condition'}
+        } else {
+            # Terminal instructions stay in place. Only the predicate is interpreted.
+            $entries+=@{At=$ins.Address;State=$frame.State};$accepted+=@($frame.Domain)
+            continue
+        }
+        if(++$forks -gt 16) {throw 'Type decision path budget exceeded'}
+        $offsets+=$ins.Address
+        foreach($arm in @(@{At=$branch.Target;Ranges=$yes},@{At=$branch.End;Ranges=$no})) {
+            $domain=@(Native-DomainIntersection $frame.Domain $arm.Ranges)
+            if($domain.Count) {$pending.Push(@{At=$arm.At;State=$frame.State.Clone();Domain=$domain;Seen=$frame.Seen.Clone()})}
+        }
+    }
+    if(!$entries.Count -or @($accepted|Where-Object {$_.Lo -ne $_.Hi -or $_.Lo -notin @(1,3,8)}).Count -or (@($accepted.Lo|Sort-Object -Unique) -join ',') -ne '1,3,8') {throw ('Type decision is not exactly extension membership: '+(($accepted|ForEach-Object {"$($_.Lo)..$($_.Hi)"}) -join ','))}
+    foreach($entry in $entries) {
+        if($entry.At -ne $entries[0].At -or !(Native-SameState $entry.State $entries[0].State)) {throw 'Type decision has different live-out states'}
+    }
+    $state.Clear();foreach($key in $entries[0].State.Keys) {$state[$key]=$entries[0].State[$key]}
+    return [pscustomobject]@{Origin=$origin;Entry=$entries[0].At;Offsets=@($offsets|Sort-Object -Unique);BitSet=$true;MaskInputs=$maskInputs}
 }
 function Native-PolicyEffect([uint64]$bad,[uint64]$good,[uint64]$normal,[hashtable]$state) {
     $normalState=$state.Clone(); $normalJoin=Native-Next $normal $normalState
@@ -1597,11 +1927,11 @@ function Native-Manifest([uint64]$Address) {
         $at=if($branch.Op -eq 'je') {$branch.Target} else {$branch.End}
         $ins=Native-Next $at $state
     }
-    $typeState=$state.Clone(); $type=Native-TypeSet $ins $typeState $normal
+    $typeState=$state.Clone(); $type=Native-TypeSet $ins $typeState $normal $prefixState 255L
     # Equality arms in the supported type chain have no copies; do not carry mismatch-arm state into them.
     if($type.BitSet) {$state=$typeState}
     $locationStart=$type.Entry
-    if($override -and (Next-Real $override).Address -ne $locationStart) {throw 'Override bypasses the location filter'}
+    if($override -and !(Native-SameContinuation $override $locationStart $state)) {throw 'Override bypasses the location filter'}
     $cmp=Native-Next $locationStart $state
     $locationOrigin=$null; $locations=@{}; $byteValues=@{}; $good=$null; $bad=$null; $policy=$false
     for($i=0;$i -lt 2;$i++) {
@@ -1958,7 +2288,7 @@ function Native-Reason([uint64]$Address) {
 function Read-Instruction([uint64]$Address) {
     if($Address -lt $nativeState.lo -or $Address -ge $nativeState.hi) { throw 'Trace leaves bounded snippet' }
     if($nativeState.cache.ContainsKey($Address)) { return $nativeState.cache[$Address] }
-    if($nativeState.cache.Count -ge 128) { throw 'Instruction budget exceeded' }
+    if($nativeState.cache.Count -ge 1024) { throw 'Instruction budget exceeded' }
     $decoded=$nativeState.engine.Decode($Address)
     if($decoded.End -gt $nativeState.hi) { throw 'Truncated instruction' }
     $nativeState.cache[$Address]=$decoded; $nativeState.decodeCount++
@@ -2122,11 +2452,16 @@ function Classify-Candidate([uint64]$Address) {
     if($guard.Op -eq 'jg') {$normal=Next-Real ([uint64]$guard.Target); $at=$guard.End}
     elseif($guard.Op -eq 'jle') {$normal=Next-Real $guard.End; $at=[uint64]$guard.Target}
     else {throw 'Unsupported manifest guard'}
-    $location=@{}; $typeValue=$null; $typeOther=$null; $overrideTarget=$null; $locationEntry=$null; $seen=@{}
+    $normalState=$state.Clone();$maskInputs=@{};$location=@{}; $typeValue=$null; $typeOther=$null; $overrideTarget=$null; $locationEntry=$null; $seen=@{}
     for($i=0;$i -lt 32;$i++) {
-        $ins=Next-Real $at
+        $ins=Native-Next $at $state
         if($seen.ContainsKey($ins.Address)) {throw 'Predicate cycle'}; $seen[$ins.Address]=$true
         if($ins.Op -in @('mov','lea')) {Apply-Copy $ins $state; $at=$ins.End; continue}
+        if(!$typeValue -and $ins.Op -eq 'cmp' -and $ins.Args -match '^(.+),([1-9]|[0-9a-f]+h)$') {
+            $membership=Native-TypeSet $ins $state $normal.Address $normalState 255L
+            $typeValue=$membership.Origin;$maskInputs=$membership.MaskInputs;$typeOther=$normal.Address;$at=$membership.Entry;$afterType=$at
+            continue
+        }
         if($ins.Op -ne 'cmp' -or $ins.Args -notmatch '^(.+),(0|1|5|0Ah)$') {throw 'Unsupported predicate'}
         $operand=$Matches[1]; $value=$Matches[2]; $origin=Resolve-Value $operand $state
         $branch=Next-Real $ins.End
@@ -2160,7 +2495,7 @@ function Classify-Candidate([uint64]$Address) {
     }
     # Register-form predicates have live-in values whose definitions precede this window.
     # Keep their distinct-value checks and require the same caller/callee evidence below.
-    if($overrideTarget -and (Next-Real $overrideTarget).Address -ne $afterType) {throw 'Override does not join location check'}
+    if($overrideTarget -and !(Native-SameContinuation $overrideTarget $afterType $state)) {throw 'Override does not join location check'}
     $effect=Read-CallSetup $at
     if($typeOther -eq $effect.Items[0].Address) {throw 'Type exclusion enters MV2 effect'}
     $unaffected=@(Read-Linear $normal.Address 10)
@@ -2169,12 +2504,18 @@ function Classify-Candidate([uint64]$Address) {
     if($unaffected[0].Op -eq 'mov' -and $unaffected[0].Args -match '^(r\w+),qword ptr \[(r\w+)\+8\]$') {
         $loaded=$Matches[1]; $node=$Matches[2]
         $continuation=$effect.After
-        # Win64 callees preserve these saved registers. Accept only copies restoring the original live-in value.
-        for($i=0;$continuation.Address -ne $normal.Address -and $i -lt 4;$i++) {
-            if($continuation.Op -ne 'mov' -or $continuation.Args -notmatch '^(rax|rcx|rdx|r8|r9|r10|r11),(rbx|rbp|rsi|rdi|r12|r13|r14|r15)$' -or
-                (Resolve-Value $Matches[2] $effect.State) -ne $Matches[1]) {throw 'Unknown startup register restoration'}
+        $restored=$effect.State.Clone();$liveIn=Native-ConstantsAt $Address
+        foreach($reg in @('rax','rcx','rdx','r8','r9','r10','r11')) {$restored[$reg]='unknown-call'}
+        # Prove restored values, including hoisted constants, under the Win64 call clobbers.
+        for($i=0;$continuation.Address -ne $normal.Address -and $i -lt 16;$i++) {
+            if($continuation.Op -ne 'mov' -or $continuation.Args -notmatch '^(rax|rcx|rdx|r8|r9|r10|r11|eax|ecx|edx|r8d|r9d|r10d|r11d),') {throw 'Unknown startup register restoration'}
+            $dest=Canonical-Register $Matches[1];$expected=Resolve-Value $dest $liveIn
+            Apply-Copy $continuation $restored
+            if((Resolve-Value $dest $restored) -ne $expected) {throw 'Startup live-in value was not restored'}
             $continuation=Next-Real $continuation.End
         }
+        foreach($saved in $effect.State.Keys|Where-Object {$_ -in @('rbx','rbp','rsi','rdi','r12','r13','r14','r15')}) {$source=$effect.State[$saved];if($source -in @('rax','rcx','rdx','r8','r9','r10','r11') -and (Resolve-Value $source $restored) -ne (Resolve-Value $source $liveIn)) {throw 'Missing saved-register restoration'}}
+        foreach($reg in $maskInputs.Keys) {if($liveIn.ContainsKey($reg) -and (Native-Integer $liveIn[$reg]) -eq (Native-Integer $maskInputs[$reg]) -and (Resolve-Value $reg $restored) -ne $liveIn[$reg]) {throw 'Missing mask restoration'}}
         if($unaffected[1].Op -ne 'test' -or $unaffected[1].Args -ne "$loaded,$loaded" -or
             @($unaffected | Where-Object {$_.Op -eq 'jne' -and $_.Target -lt $_.Address}).Count -eq 0 -or
             $effect.State['r8'] -ne "[$node+38h]" -or
@@ -2200,7 +2541,7 @@ function Classify-Candidate([uint64]$Address) {
         $kind='allow-install-policy-inline'
     }
     if($Inspect) {@($nativeState.cache.Values | Sort-Object Address) | ForEach-Object {$_.Text} | Out-Host}
-    $patchAt=$nativeState.offset+$guard.Address-$Address
+    $patchAt=$nativeState.offset+$guard.Address-$nativeState.lo
     $length=[int]($guard.End-$guard.Address)
     $replacement=[byte[]]::new($length)
     if($guard.Op -eq 'jle') {for($i=0;$i -lt $length;$i++) {$replacement[$i]=0x90}}
@@ -2214,8 +2555,8 @@ function Classify-Candidate([uint64]$Address) {
         CallRva=($effect.Call.Target-$imageBase);CallOffset=($nativeState.offset+$effect.Call.Address-$Address);
         NormalCallRva=if($normalCall) {$normalCall.Call.Target-$imageBase} else {$null};
         FlowPaths=$effect.Paths;FlowSpills=$effect.TotalSpills;Arguments=$effect.State;PredicateLocation=$location['5'].Origin;PredicateType=$typeValue;
-        FiveOffset=($nativeState.offset+$location['5'].Compare.Address-$Address);
-        TenOffset=($nativeState.offset+$location['0Ah'].Compare.Address-$Address);
+        FiveOffset=($nativeState.offset+$location['5'].Compare.Address-$nativeState.lo);
+        TenOffset=($nativeState.offset+$location['0Ah'].Compare.Address-$nativeState.lo);
         Decoded=$nativeState.cache.Count
     }
 }
@@ -2227,51 +2568,20 @@ function Test-Callee([uint64]$rva,[string]$kind) {
     $path=Join-Path $dumpRoot 'callee.dmp'
     Write-NativeDump $path ([long[]]@($nativeState.offset)) ([uint64[]]@($nativeState.lo))
     $nativeState.engine=[Mv2NativeDisassembler]::new($path)
-    $state=@{}; $at=$nativeState.lo; $facts=@{}; $items=@(); $returned=$false
+    $nativeState.dumpPath=$path
     try {
-        # ponytail: inspect one linear prefix through its first RET, max 64 instructions.
-        # This is extra structural evidence, not a proof of all callee paths or identity.
-        for($i=0;$i -lt 64;$i++) {
-            $ins=Read-Instruction $at; $items+=$ins.Text; $at=$ins.End
-            if($ins.Op -eq 'ret') {$returned=$true; break}
-            if($ins.Op -eq 'call') {
-                if($ins.Target -and $state['r8'] -eq 'low32(rdx)' -and $state['rdx'] -eq 'rcx') {$facts.ForwardResource=$true}
-                foreach($r in @('rax','rcx','rdx','r8','r9','r10','r11')) {$state[$r]='unknown-call'}
-                continue
-            }
-            if($ins.Op -eq 'mov' -and $ins.Args -match '^(.+),(.+)$') {
-                $dest=$Matches[1]; $src=$Matches[2]
-                try {$origin=Resolve-Value $src $state} catch {$origin='unknown'}
-                if($origin -eq 'qword ptr [rcx]') {$facts.VectorBegin=$true}; if($origin -eq 'qword ptr [rcx+8]') {$facts.VectorLength=$true}; if($origin -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.IntKey=$true}; if($origin -eq 'qword ptr [rdx+8]' -or $origin -eq 'qword ptr [{rdx}+8]') {$facts.TreeRoot=$true}
-                if($origin -eq 'qword ptr [r8]' -or $origin -eq 'qword ptr [{r8}]') {$facts.Key=$true}
-                if($origin -match '^qword ptr \[rdx\+') {$facts.PolicyObject=$true}
-                if($dest -match '^(r\w+|e\w+)$') {
-                    try {$state[(Canonical-Register $dest)]=$origin} catch {}
-                } else {
-                    try {$where=Resolve-Value $dest $state} catch {$where='unknown'}
-                    if($where -eq 'qword ptr [{rdx}]') {$facts.VectorResult=$true}; if($where -eq 'byte ptr [{rdx}+8]' -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.VectorFlag=$true}; if($where -in @('qword ptr [{rcx}]','qword ptr [rcx]')) {$facts.WriteNode=$true}
-                    if($where -in @('byte ptr [{rcx}+8]','byte ptr [rcx+8]') -and $src -eq 'al' -and $state['rax'] -eq '0') {$facts.WriteInserted=$true}
-                    if($where -eq 'qword ptr [{rcx}+10h]' -and $src -eq '0') {$facts.ClearString=$true}
-                }
-                continue
-            }
-            if($ins.Op -eq 'xor' -and $ins.Args -match '^([^,]+),\1$') {
-                try {$state[(Canonical-Register $Matches[1])]='0'} catch {}
-            } elseif($ins.Op -notin @('push','pop','cmp','test','nop') -and $ins.Op -notmatch '^j' -and $ins.Args -match '^([re][a-z0-9]+),') {
-                try {$state[(Canonical-Register $Matches[1])]='unknown-write'} catch {}
-            }
-            if($ins.Op -eq 'lea' -and $ins.Args -match '\*4\]') {$facts.Scale4=$true}; if($ins.Op -eq 'cmp' -and $ins.Args -match '^dword ptr \[.+\],(r\w+d)$' -and (Resolve-Value $Matches[1] $state) -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.CompareKey=$true}; if($ins.Op -eq 'cmp' -and $ins.Args -match ',5$') {$facts.ComponentPolicy=$true}
-        }
-        $facts.ReturnsOutput=$state['rax'] -eq 'rcx'
-        if(!$returned) {throw 'Callee return outside instruction budget'}
+        $argument=if($kind -eq 'normal-policy') {''} elseif($kind -eq 'reason-insert') {'rdx'} else {'rcx'}
+        $proof=Native-ArgumentProof ($imageBase+$rva) $argument
+        if(!$proof) {throw ('Callee output/stack proof failed: '+$kind+' RVA '+$rva.ToString('X'))}
+        $facts=$proof.Facts
         $accepted=switch($kind) {
-            'skip-startup-disable' {$facts.TreeRoot -and $facts.Key -and $facts.WriteNode -and $facts.WriteInserted -and $facts.ReturnsOutput}
-            'allow-install-policy-inline' {$facts.ForwardResource -and $facts.ClearString -and $facts.ReturnsOutput}
+            'skip-startup-disable' {$facts.TreeRoot -and $facts.Key -and $facts.WriteNode -and $facts.WriteInserted}
+            'allow-install-policy-inline' {$facts.ForwardResource -and $facts.ClearString}
             'normal-policy' {$facts.PolicyObject -and $facts.ComponentPolicy}
-'reason-insert' {$facts.VectorBegin -and $facts.VectorLength -and $facts.IntKey -and $facts.Scale4 -and $facts.CompareKey -and $facts.VectorResult -and $facts.VectorFlag -and $state['rax'] -eq 'rdx'}
+            'reason-insert' {$facts.VectorBegin -and $facts.VectorLength -and $facts.IntKey -and $facts.Scale4 -and $facts.CompareKey -and $facts.VectorResult -and $facts.VectorFlag}
         }
         if(!$accepted) {throw "Callee shape mismatch: $kind / $($facts | ConvertTo-Json -Compress)"}
-        return [pscustomobject]@{Rva=$rva;Kind=$kind;Facts=$facts;Instructions=$items}
+        return [pscustomobject]@{Rva=$rva;Kind=$kind;Facts=$facts;Instructions=$proof.Instructions;Returns=$proof.Returns}
     } finally {$nativeState.engine.Dispose()}
 }
 
@@ -2301,7 +2611,7 @@ function Test-Callee([uint64]$rva,[string]$kind) {
                     $absolute=$begin+$hit
                     if($absolute -ge $core -and $absolute -lt $coreEnd) {[void]$seeds.Add($absolute)}
                 }
-                if($seeds.Count -gt 64) {throw 'Native candidate budget exceeded'}
+                if($seeds.Count -gt 1024) {throw 'Native candidate budget exceeded'}
             }
         }
         $offsets=@($seeds | Sort-Object)
@@ -2310,27 +2620,34 @@ function Test-Callee([uint64]$rva,[string]$kind) {
         $buffer=$null
         if($RuleNames.Count -lt $supported.Count) {[GC]::Collect()}
         $addresses=@(foreach($off in $offsets) {$imageBase+[uint64](ConvertTo-PeRva $pe $off 4096)})
+        $spans=@(foreach($off in $offsets) {try {Native-FunctionSpan $off} catch {$null}})
+        $windowOffsets=@(for($c=0;$c -lt $offsets.Count;$c++) {if($spans[$c]) {$spans[$c].Offset} else {$offsets[$c]}})
+        $windowAddresses=@(for($c=0;$c -lt $offsets.Count;$c++) {if($spans[$c]) {$spans[$c].Begin} else {$addresses[$c]}})
         $dump=Join-Path $dumpRoot 'candidates.dmp'
         $results=@(); $rejected=@(); $reasonSeeds=@()
         if($traceManifests) {
-        Write-NativeDump $dump ([long[]]$offsets) ([uint64[]]$addresses)
+        for($batch=0;$batch -lt $offsets.Count;$batch+=64) {
+        $last=[Math]::Min($batch+63,$offsets.Count-1)
+        Write-NativeDump $dump ([long[]]$windowOffsets[$batch..$last]) ([uint64[]]$windowAddresses[$batch..$last])
         $nativeState.engine=[Mv2NativeDisassembler]::new($dump)
+        $nativeState.dumpPath=$dump
         try {
-            for($c=0;$c -lt $offsets.Count;$c++) {
-                $nativeState.offset=[long]$offsets[$c]; $nativeState.lo=[uint64]$addresses[$c]; $nativeState.hi=$nativeState.lo+4096; $nativeState.cache=@{}
+            for($c=$batch;$c -le $last;$c++) {
+                $nativeState.offset=[long]$windowOffsets[$c]; $nativeState.lo=[uint64]$windowAddresses[$c]; $nativeState.hi=if($spans[$c]) {$spans[$c].End} else {$nativeState.lo+4096}; $nativeState.cache=@{};$nativeState.functionSpan=$spans[$c]
                 try {
-                    if((Read-Instruction $nativeState.lo).Op -eq 'mov') {
-                        if($traceReasons) {$reasonSeeds+=@{Offset=$nativeState.offset;Address=$nativeState.lo}}
+                    if((Read-Instruction $addresses[$c]).Op -eq 'mov') {
+                        if($traceReasons) {$reasonSeeds+=@{Offset=$offsets[$c];Address=$addresses[$c]}}
                     } else {
                         $item=$null
-                        if($traceOriginal) {try {$item=Classify-Candidate $nativeState.lo} catch {}}
-                        if(!$item -and $traceAdditional) {$item=Native-Manifest $nativeState.lo}
+                        if($traceOriginal) {try {$item=Classify-Candidate $addresses[$c]} catch {Write-Verbose ("Caller candidate {0}: {1}" -f $offsets[$c],$_.Exception.Message)}}
+                        if(!$item -and $traceAdditional) {$item=Native-Manifest $addresses[$c]}
                         if($item -and $item.Name -in $RuleNames) {$results+=$item}
                     }
                 }
                 catch {$rejected+=[pscustomobject]@{Offset=$nativeState.offset;Reason=$_.Exception.Message}}
             }
         } finally {$nativeState.engine.Dispose(); $nativeState.engine=$null}
+        }
         } else {
             for($c=0;$c -lt $offsets.Count;$c++) {$reasonSeeds+=@{Offset=$offsets[$c];Address=$addresses[$c]}}
         }
@@ -2357,7 +2674,7 @@ function Test-Callee([uint64]$rva,[string]$kind) {
         }
         return $results
     } finally {
-        foreach($name in @('candidates.dmp','callee.dmp','reason.dmp','validator.dmp')) {
+        foreach($name in @('candidates.dmp','callee.dmp','reason.dmp','validator.dmp','call.dmp','return.dmp')) {
             $file=Join-Path $dumpRoot $name
             if([IO.File]::Exists($file)) {[IO.File]::Delete($file)}
         }
