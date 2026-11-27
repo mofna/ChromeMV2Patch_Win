@@ -1617,25 +1617,36 @@ function Native-FrameSlot([string]$operand,[int]$sp,[hashtable]$registers) {
     if($registers[$base] -like 'stack:*') {return @{Offset=[int]$registers[$base].Substring(6)+$disp;Width=$width}}
     return $null
 }
-function Native-ArgumentProof([uint64]$address,[string]$argument) {
+function Native-ArgumentProof([uint64]$address,[string]$argument,[int]$depth=0) {
+    if($depth -ge 4) {return $false}
     $saved=$nativeState.Clone();$decoder=$null;$suspended=$false
     try {
         $rva=$address-$imageBase;$section=@($pe.ExecutableRanges|Where-Object {$rva -ge $_.VirtualAddress -and $rva -lt $_.VirtualAddress+$_.Length})
         if($section.Count -ne 1) {return $false}
         $offset=$section[0].Start+$rva-$section[0].VirtualAddress
-        try {$span=Native-FunctionSpan $offset} catch {$span=[pscustomobject]@{Offset=$offset;Begin=$address;End=$address+4096}}
+        try {$span=Native-FunctionSpan $offset 16384} catch {$span=[pscustomobject]@{Offset=$offset;Begin=$address;End=$address+4096}}
         if($span.Begin -ne $address) {return $false}
-        $nativeState.engine.Dispose();$suspended=$true;$dump=Join-Path $dumpRoot 'return.dmp'
-        Write-NativeDump $dump ([long[]]@($offset)) ([uint64[]]@($address))
+        $nativeState.engine.Dispose();$suspended=$true;$dump=Join-Path $dumpRoot ('return-'+$depth+'.dmp')
+        $pages=@(for($page=0;$page -lt $span.End-$address;$page+=4096) {$page})
+        Write-NativeDump $dump ([long[]]@($pages|ForEach-Object {$offset+$_})) ([uint64[]]@($pages|ForEach-Object {$address+$_}))
         $decoder=[Mv2NativeDisassembler]::new($dump);$nativeState.engine=$decoder;$nativeState.lo=$address;$nativeState.hi=$span.End;$nativeState.cache=@{};$nativeState.functionSpan=$span;$nativeState.dumpPath=$dump
         $preserved=@('rbx','rbp','rsi','rdi','r12','r13','r14','r15','xmm6','xmm7','xmm8','xmm9','xmm10','xmm11','xmm12','xmm13','xmm14','xmm15')
         $initial=@{al='unknown'};foreach($reg in @('rax','rcx','rdx','r8','r9','r10','r11')+$preserved) {$initial[$reg]=$reg}
         $graph=Native-FlowGraph $span;$incoming=@{};$incoming[$address]=@{SP=0;Registers=$initial;Slots=@{}}
-        $queue=[Collections.Generic.Queue[uint64]]::new();$queue.Enqueue($address);$steps=0
+        $queue=[Collections.Generic.Queue[uint64]]::new();$queue.Enqueue($address);$steps=0;$tailReturns=0
         while($queue.Count) {
             if(++$steps -gt 4096) {throw 'Output proof dataflow budget'}
             $at=$queue.Dequeue();$prior=$incoming[$at];$regs=$prior.Registers.Clone();$slots=$prior.Slots.Clone();$sp=$prior.SP;$node=$graph.Nodes[$at];$ins=$node.Instruction
-            if($node.External.Count) {throw ('Output proof leaves function at '+$at.ToString('X'))}
+            if($node.External.Count) {
+                if($ins.Op -ne 'jmp' -or !$ins.Target -or $node.External.Count -ne 1 -or $sp -ne 0) {throw 'Invalid tail-call frame'}
+                foreach($reg in $preserved) {if($regs[$reg] -ne $reg) {throw 'Tail-call nonvolatile register origin'}}
+                $forwards=@(if($argument) {'rcx','rdx','r8','r9'|Where-Object {$regs[$_] -eq $argument}} else {''})
+                $proof=$false
+                foreach($forward in $forwards) {$proof=Native-ArgumentProof $ins.Target $forward ($depth+1);if($proof) {break}}
+                if(!$proof) {throw 'Tail-call output proof failed'}
+                $tailReturns+=$proof.Returns
+                continue
+            }
             if($ins.Op -eq 'ret') {if($ins.Args) {throw 'Callee stack cleanup'};continue}
             if(Native-EndsFlow $ins) {continue}
             if($ins.Op -eq 'call') {
@@ -1693,7 +1704,7 @@ function Native-ArgumentProof([uint64]$address,[string]$argument) {
             }
         }
         $returns=@($incoming.Keys|Where-Object {$graph.Nodes[$_].Instruction.Op -eq 'ret'})
-        if(!$returns.Count -or @($returns|Where-Object {($argument -and $incoming[$_].Registers['rax'] -ne $argument) -or $incoming[$_].SP -ne 0}).Count) {throw ('Output proof return origins: '+(($returns|ForEach-Object {'{0:X}:{1}:SP{2}' -f $_,$incoming[$_].Registers['rax'],$incoming[$_].SP}) -join ';'))}
+        if((!$returns.Count -and !$tailReturns) -or @($returns|Where-Object {($argument -and $incoming[$_].Registers['rax'] -ne $argument) -or $incoming[$_].SP -ne 0}).Count) {throw ('Output proof return origins: '+(($returns|ForEach-Object {'{0:X}:{1}:SP{2}' -f $_,$incoming[$_].Registers['rax'],$incoming[$_].SP}) -join ';'))}
         foreach($at in $returns) {foreach($reg in $preserved) {if($incoming[$at].Registers[$reg] -ne $reg) {throw ('Nonvolatile register return origin: '+$reg)}}}
         $facts=@{}
         foreach($at in $incoming.Keys) {
@@ -1717,7 +1728,7 @@ function Native-ArgumentProof([uint64]$address,[string]$argument) {
             if($ins.Op -eq 'cmp' -and $ins.Args -match '^dword ptr \[.+\],(r\w+d)$' -and (Resolve-Value $Matches[1] $state) -in @('dword ptr [r8]','dword ptr [{r8}]')) {$facts.CompareKey=$true}
             if($ins.Op -eq 'cmp' -and $ins.Args -match ',5$') {$facts.ComponentPolicy=$true}
         }
-        return [pscustomobject]@{Facts=$facts;Returns=$returns.Count;Instructions=$incoming.Count;Output=$argument}
+        return [pscustomobject]@{Facts=$facts;Returns=$returns.Count+$tailReturns;Instructions=$incoming.Count;Output=$argument}
     } catch {Write-Verbose ('Argument proof '+$address.ToString('X')+': '+$_.Exception.Message);return $false}
     finally {if($decoder) {$decoder.Dispose()};foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]};if($suspended) {$nativeState.engine=[Mv2NativeDisassembler]::new($saved.dumpPath)}}
 }
@@ -2110,7 +2121,7 @@ function Native-Callee([uint64]$rva,[string]$kind) {
         try {$calleeCache[$cacheKey]=Native-Validator $nativeState.lo; return $calleeCache[$cacheKey]} finally {$nativeState.engine.Dispose()}
     } finally {foreach($key in $saved.Keys) {$nativeState[$key]=$saved[$key]}}
 }
-function Native-FunctionSpan([long]$offset) {
+function Native-FunctionSpan([long]$offset,[int]$limit=4096) {
     if(!$nativeState.runtimeFunctions) {
         $dos=Read-StreamRange $Stream 0 64; $peAt=[BitConverter]::ToInt32($dos,60)
         $header=Read-StreamRange $Stream $peAt 264
@@ -2132,8 +2143,9 @@ function Native-FunctionSpan([long]$offset) {
     while($lo -le $hi) {
         $mid=[int][Math]::Floor(($lo+$hi)/2); $begin=[BitConverter]::ToUInt32($data,12*$mid); $end=[BitConverter]::ToUInt32($data,12*$mid+4)
         if($rva -lt $begin) {$hi=$mid-1} elseif($rva -ge $end) {$lo=$mid+1} else {
-            if($end -le $begin -or $end-$begin -gt 4096) {throw 'Reason function exceeds bounded window'}
-            $range=@($pe.ExecutableRanges | Where-Object {$begin -ge $_.VirtualAddress -and $begin+4096 -le $_.VirtualAddress+$_.Length})
+            if($end -le $begin -or $end-$begin -gt $limit) {throw 'Reason function exceeds bounded window'}
+            $window=[Math]::Ceiling(($end-$begin)/4096)*4096
+            $range=@($pe.ExecutableRanges | Where-Object {$begin -ge $_.VirtualAddress -and $begin+$window -le $_.VirtualAddress+$_.Length})
             if($range.Count -ne 1) {throw 'Reason function is not executable'}
             return [pscustomobject]@{Offset=[long]($range[0].Start+$begin-$range[0].VirtualAddress);Begin=$imageBase+$begin;End=$imageBase+$end}
         }
@@ -2674,7 +2686,7 @@ function Test-Callee([uint64]$rva,[string]$kind) {
         }
         return $results
     } finally {
-        foreach($name in @('candidates.dmp','callee.dmp','reason.dmp','validator.dmp','call.dmp','return.dmp')) {
+        foreach($name in @('candidates.dmp','callee.dmp','reason.dmp','validator.dmp','call.dmp','return-0.dmp','return-1.dmp','return-2.dmp','return-3.dmp')) {
             $file=Join-Path $dumpRoot $name
             if([IO.File]::Exists($file)) {[IO.File]::Delete($file)}
         }
